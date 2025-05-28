@@ -1,0 +1,6 @@
+[tools]
+python = "3.12.8"
+
+[env]
+# Auto-DJ Backend Environment Configuration
+PYTHONPATH = "." 

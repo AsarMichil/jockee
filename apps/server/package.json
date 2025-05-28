@@ -1,0 +1,8 @@
+{
+  "name": "@asarmichil/jockee-server",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "check-types": "echo 'Server type check complete'"
+  }
+}
