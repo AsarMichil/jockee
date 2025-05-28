@@ -20,7 +20,7 @@ class SpotifyClient:
             client_id=settings.SPOTIFY_CLIENT_ID,
             client_secret=settings.SPOTIFY_CLIENT_SECRET,
             redirect_uri=settings.SPOTIFY_REDIRECT_URI,
-            scope="playlist-read-private playlist-read-collaborative user-library-read",
+            scope="playlist-read-private playlist-read-collaborative user-library-read user-read-email",
             cache_path=None,  # Don't cache tokens to file
         )
 
@@ -46,6 +46,39 @@ class SpotifyClient:
         auth_manager = self.get_auth_manager()
         token_info = auth_manager.refresh_access_token(refresh_token)
         return token_info
+
+    def get_current_user(self) -> Dict[str, Any]:
+        """Get current user profile."""
+        client = self.get_client()
+        if not client:
+            raise ValueError("No authenticated Spotify client available")
+        
+        return client.current_user()
+
+    def get_user_playlists(self, limit: int = 50, offset: int = 0) -> Dict[str, Any]:
+        """Get current user's playlists."""
+        client = self.get_client()
+        if not client:
+            raise ValueError("No authenticated Spotify client available")
+        
+        return client.current_user_playlists(limit=limit, offset=offset)
+
+    def search_playlists(self, query: str, limit: int = 20, offset: int = 0) -> Dict[str, Any]:
+        """Search for playlists."""
+        client = self.get_client()
+        if not client:
+            raise ValueError("No authenticated Spotify client available")
+        
+        results = client.search(q=query, type='playlist', limit=limit, offset=offset)
+        return results['playlists']
+
+    def get_playlist_details(self, playlist_id: str) -> Dict[str, Any]:
+        """Get detailed playlist information."""
+        client = self.get_client()
+        if not client:
+            raise ValueError("No authenticated Spotify client available")
+        
+        return client.playlist(playlist_id)
 
     def extract_playlist_id(self, playlist_url: str) -> Optional[str]:
         """Extract playlist ID from Spotify URL."""

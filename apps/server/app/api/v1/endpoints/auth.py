@@ -1,6 +1,6 @@
-from fastapi import APIRouter, HTTPException, Request, Query
+from fastapi import APIRouter, HTTPException, Request, Query, Depends
 from app.core.spotify import SpotifyClient
-from app.api.v1.dependencies import redis_client
+from app.api.v1.dependencies import redis_client, get_spotify_client
 import uuid
 import json
 import logging
@@ -110,6 +110,33 @@ async def spotify_callback(
         logger.error(f"Error in Spotify callback: {e}")
         raise HTTPException(
             status_code=500, detail="Failed to complete Spotify authentication"
+        )
+
+
+@router.get("/me")
+async def get_current_user(
+    spotify_client: SpotifyClient = Depends(get_spotify_client),
+):
+    """
+    Get current user profile from Spotify.
+    """
+    try:
+        user_data = spotify_client.get_current_user()
+        
+        return {
+            "id": user_data["id"],
+            "display_name": user_data.get("display_name"),
+            "email": user_data.get("email"),
+            "country": user_data.get("country"),
+            "followers": user_data.get("followers", {}).get("total", 0),
+            "images": user_data.get("images", []),
+            "external_urls": user_data.get("external_urls", {}),
+        }
+        
+    except Exception as e:
+        logger.error(f"Error fetching current user: {e}")
+        raise HTTPException(
+            status_code=500, detail="Failed to fetch user profile"
         )
 
 

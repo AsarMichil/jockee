@@ -1,14 +1,139 @@
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Request
+from fastapi.responses import StreamingResponse, FileResponse
 from sqlalchemy.orm import Session
 from typing import List, Optional
+import os
+import mimetypes
+from pathlib import Path
 from app.db.session import get_db
-from app.models.track import Track
+from app.models.track import Track, FileSource
 from app.schemas.track import Track as TrackSchema, TrackSummary
+from app.api.v1.dependencies import get_spotify_client
+from app.core.spotify import SpotifyClient
 import logging
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+@router.get("/{track_id}/audio")
+async def stream_track_audio(
+    track_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """
+    Stream audio file for a track with range request support.
+    Note: This endpoint doesn't require authentication for streaming,
+    but getting the URL requires authentication via the /audio/url endpoint.
+    """
+    try:
+        # Get track from database
+        track = db.query(Track).filter(Track.id == track_id).first()
+        
+        if not track:
+            raise HTTPException(status_code=404, detail="Track not found")
+        
+        if not track.file_path or track.file_source == FileSource.UNAVAILABLE:
+            raise HTTPException(status_code=404, detail="Audio file not available for this track")
+        
+        # Check if file exists on disk
+        file_path = Path(track.file_path)
+        if not file_path.exists():
+            logger.error(f"Audio file not found on disk: {track.file_path}")
+            raise HTTPException(status_code=404, detail="Audio file not found on disk")
+        
+        # Get file info
+        file_size = file_path.stat().st_size
+        content_type = mimetypes.guess_type(str(file_path))[0] or "audio/mpeg"
+        
+        # Handle range requests for streaming
+        range_header = request.headers.get("range")
+        
+        if range_header:
+            # Parse range header (e.g., "bytes=0-1023")
+            try:
+                range_match = range_header.replace("bytes=", "").split("-")
+                start = int(range_match[0]) if range_match[0] else 0
+                end = int(range_match[1]) if range_match[1] else file_size - 1
+                
+                # Ensure valid range
+                start = max(0, start)
+                end = min(file_size - 1, end)
+                content_length = end - start + 1
+                
+                def generate_chunk():
+                    with open(file_path, "rb") as f:
+                        f.seek(start)
+                        remaining = content_length
+                        while remaining > 0:
+                            chunk_size = min(8192, remaining)  # 8KB chunks
+                            chunk = f.read(chunk_size)
+                            if not chunk:
+                                break
+                            remaining -= len(chunk)
+                            yield chunk
+                
+                headers = {
+                    "Content-Range": f"bytes {start}-{end}/{file_size}",
+                    "Accept-Ranges": "bytes",
+                    "Content-Length": str(content_length),
+                    "Content-Type": content_type,
+                    "Cache-Control": "public, max-age=3600",
+                    "Access-Control-Allow-Origin": "*",
+                    "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
+                    "Access-Control-Allow-Headers": "Range, Content-Type",
+                }
+                
+                return StreamingResponse(
+                    generate_chunk(),
+                    status_code=206,  # Partial Content
+                    headers=headers,
+                    media_type=content_type
+                )
+                
+            except (ValueError, IndexError) as e:
+                logger.error(f"Invalid range header: {range_header}, error: {e}")
+                # Fall through to serve full file
+        
+        # Serve full file if no range request or invalid range
+        headers = {
+            "Content-Length": str(file_size),
+            "Content-Type": content_type,
+            "Accept-Ranges": "bytes",
+            "Cache-Control": "public, max-age=3600",
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
+            "Access-Control-Allow-Headers": "Range, Content-Type",
+        }
+        
+        return FileResponse(
+            path=file_path,
+            headers=headers,
+            media_type=content_type,
+            filename=f"{track.artist} - {track.title}.mp3"
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error streaming audio for track {track_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to stream audio file")
+
+
+@router.options("/{track_id}/audio")
+async def audio_options(track_id: str):
+    """
+    Handle CORS preflight requests for audio streaming.
+    """
+    headers = {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
+        "Access-Control-Allow-Headers": "Range, Content-Type, Authorization",
+        "Access-Control-Max-Age": "86400",
+    }
+    return StreamingResponse(iter([]), headers=headers)
 
 
 @router.get("/{track_id}", response_model=TrackSchema)
@@ -29,72 +154,6 @@ async def get_track(track_id: str, db: Session = Depends(get_db)):
     except Exception as e:
         logger.error(f"Error getting track {track_id}: {e}")
         raise HTTPException(status_code=500, detail="Failed to get track")
-
-
-@router.get("/spotify/{spotify_id}", response_model=TrackSchema)
-async def get_track_by_spotify_id(spotify_id: str, db: Session = Depends(get_db)):
-    """
-    Get track information by Spotify ID.
-    """
-    try:
-        track = db.query(Track).filter(Track.spotify_id == spotify_id).first()
-
-        if not track:
-            raise HTTPException(status_code=404, detail="Track not found")
-
-        return track
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error getting track by Spotify ID {spotify_id}: {e}")
-        raise HTTPException(status_code=500, detail="Failed to get track")
-
-
-@router.get("/", response_model=List[TrackSummary])
-async def list_tracks(
-    skip: int = 0,
-    limit: int = 100,
-    has_analysis: Optional[bool] = None,
-    has_file: Optional[bool] = None,
-    db: Session = Depends(get_db),
-):
-    """
-    List tracks with optional filtering.
-
-    Args:
-        skip: Number of tracks to skip
-        limit: Maximum number of tracks to return
-        has_analysis: Filter by whether track has been analyzed
-        has_file: Filter by whether track has an audio file
-    """
-    try:
-        query = db.query(Track)
-
-        # Apply filters
-        if has_analysis is not None:
-            if has_analysis:
-                query = query.filter(Track.analyzed_at.isnot(None))
-            else:
-                query = query.filter(Track.analyzed_at.is_(None))
-
-        if has_file is not None:
-            if has_file:
-                query = query.filter(Track.file_path.isnot(None))
-            else:
-                query = query.filter(Track.file_path.is_(None))
-
-        # Order by creation date (newest first)
-        query = query.order_by(Track.created_at.desc())
-
-        # Apply pagination
-        tracks = query.offset(skip).limit(limit).all()
-
-        return tracks
-
-    except Exception as e:
-        logger.error(f"Error listing tracks: {e}")
-        raise HTTPException(status_code=500, detail="Failed to list tracks")
 
 
 @router.get("/search/", response_model=List[TrackSummary])
@@ -190,3 +249,109 @@ async def get_track_stats(db: Session = Depends(get_db)):
     except Exception as e:
         logger.error(f"Error getting track stats: {e}")
         raise HTTPException(status_code=500, detail="Failed to get track statistics")
+
+
+@router.get("/spotify/{spotify_id}", response_model=TrackSchema)
+async def get_track_by_spotify_id(spotify_id: str, db: Session = Depends(get_db)):
+    """
+    Get track information by Spotify ID.
+    """
+    try:
+        track = db.query(Track).filter(Track.spotify_id == spotify_id).first()
+
+        if not track:
+            raise HTTPException(status_code=404, detail="Track not found")
+
+        return track
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting track by Spotify ID {spotify_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get track")
+
+
+@router.get("/", response_model=List[TrackSummary])
+async def list_tracks(
+    skip: int = 0,
+    limit: int = 100,
+    has_analysis: Optional[bool] = None,
+    has_file: Optional[bool] = None,
+    db: Session = Depends(get_db),
+):
+    """
+    List tracks with optional filtering.
+
+    Args:
+        skip: Number of tracks to skip
+        limit: Maximum number of tracks to return
+        has_analysis: Filter by whether track has been analyzed
+        has_file: Filter by whether track has an audio file
+    """
+    try:
+        query = db.query(Track)
+
+        # Apply filters
+        if has_analysis is not None:
+            if has_analysis:
+                query = query.filter(Track.analyzed_at.isnot(None))
+            else:
+                query = query.filter(Track.analyzed_at.is_(None))
+
+        if has_file is not None:
+            if has_file:
+                query = query.filter(Track.file_path.isnot(None))
+            else:
+                query = query.filter(Track.file_path.is_(None))
+
+        # Order by creation date (newest first)
+        query = query.order_by(Track.created_at.desc())
+
+        # Apply pagination
+        tracks = query.offset(skip).limit(limit).all()
+
+        return tracks
+
+    except Exception as e:
+        logger.error(f"Error listing tracks: {e}")
+        raise HTTPException(status_code=500, detail="Failed to list tracks")
+
+
+@router.get("/{track_id}/audio/url")
+async def get_track_audio_url(
+    track_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    spotify_client: SpotifyClient = Depends(get_spotify_client),
+):
+    """
+    Get the streaming URL for a track's audio file.
+    This endpoint returns the URL that can be used to stream the audio.
+    """
+    try:
+        # Get track from database
+        track = db.query(Track).filter(Track.id == track_id).first()
+        
+        if not track:
+            raise HTTPException(status_code=404, detail="Track not found")
+        
+        if not track.file_path or track.file_source == FileSource.UNAVAILABLE:
+            raise HTTPException(status_code=404, detail="Audio file not available for this track")
+        
+        # Check if file exists on disk
+        file_path = Path(track.file_path)
+        if not file_path.exists():
+            logger.error(f"Audio file not found on disk: {track.file_path}")
+            raise HTTPException(status_code=404, detail="Audio file not found on disk")
+        
+        # Return the streaming URL
+        base_url = str(request.base_url).rstrip('/')
+        audio_url = f"{base_url}/api/v1/tracks/{track_id}/audio"
+        
+        return {"url": audio_url}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting audio URL for track {track_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get audio URL")
