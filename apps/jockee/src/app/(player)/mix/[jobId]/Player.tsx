@@ -26,6 +26,7 @@ import {
   Headphones
 } from "lucide-react";
 import { PlaybackSlider } from "./PlaybackSlider";
+import BPMSlider from "./BPMSlider";
 
 export default function Player({ data }: { data: Promise<AnalysisJob> }) {
   const job = use(data);
@@ -47,21 +48,18 @@ export default function Player({ data }: { data: Promise<AnalysisJob> }) {
   const [volumeB, setVolumeBInner] = useState([75]);
 
   const setVolumeA = (value: number[]) => {
-    console.log("setVolumeA", value);
     const newVolume = value[0] / 100;
     setVolumeAInner(value);
     setDeckVolume("deckA", newVolume);
   };
 
   const setVolumeB = (value: number[]) => {
-    console.log("setVolumeB", value);
     const newVolume = value[0] / 100;
     setVolumeBInner(value);
     setDeckVolume("deckB", newVolume);
   };
 
   const setCrossfader = (value: number[]) => {
-    console.log("setCrossfader", value);
     setCrossfaderPosition(value);
     setDeckVolume("deckA", 1 - value[0] / 100);
     setDeckVolume("deckB", value[0] / 100);
@@ -119,15 +117,16 @@ export default function Player({ data }: { data: Promise<AnalysisJob> }) {
   };
 
   const handlePlayPause = (deck: "A" | "B") => {
-    console.log("handlePlayPause PLEASE", deck);
     if (deck === "A") {
-      if (deckA?.isPlaying) {
+      const audioElement = deckA?.audioElement;
+      if (audioElement && !audioElement.paused) {
         pauseDeck("deckA");
       } else if (deckA?.track) {
         playDeck("deckA", deckA.track.id);
       }
     } else {
-      if (deckB?.isPlaying) {
+      const audioElement = deckB?.audioElement;
+      if (audioElement && !audioElement.paused) {
         pauseDeck("deckB");
       } else if (deckB?.track) {
         playDeck("deckB", deckB.track.id);
@@ -148,7 +147,7 @@ export default function Player({ data }: { data: Promise<AnalysisJob> }) {
   const DeckCard = ({
     deck,
     track,
-    isPlaying,
+    audioElement,
     volume,
     setVolume,
     onPlayPause,
@@ -156,144 +155,150 @@ export default function Player({ data }: { data: Promise<AnalysisJob> }) {
   }: {
     deck: "A" | "B";
     track: Track | null;
-    isPlaying: boolean;
+    audioElement: HTMLAudioElement | null;
     volume: number[];
     setVolume: (value: number[]) => void;
     onPlayPause: () => void;
     onLoad: (track: Track) => void;
-  }) => (
-    <Card className="w-full">
-      <CardHeader className="pb-4">
-        <div className="flex items-center justify-between">
-          <CardTitle className="text-lg font-bold text-gray-900">
-            Deck {deck}
-          </CardTitle>
-          <div className="flex items-center space-x-2">
-            <Music className="h-4 w-4 text-gray-500" />
-            <span className="text-sm text-gray-500">
-              {track ? formatBPM(track.bpm) : "No Track"}
-            </span>
-          </div>
-        </div>
-      </CardHeader>
+  }) => {
+    const isPlaying = audioElement ? !audioElement.paused : false;
 
-      <CardContent className="space-y-4">
-        {/* Track Info */}
-        <div className="bg-gray-50 rounded-lg p-4">
-          {track ? (
-            <div className="space-y-2">
-              <h3 className="font-semibold text-gray-900 truncate">
-                {track.title}
-              </h3>
-              <p className="text-sm text-gray-600 truncate">{track.artist}</p>
-              <div className="flex items-center justify-between text-xs text-gray-500">
-                <div className="flex items-center space-x-1">
-                  <Clock className="h-3 w-3" />
-                  <span>{formatTime(track.duration)}</span>
-                </div>
-                <div className="flex items-center space-x-1">
-                  <Zap className="h-3 w-3" />
-                  <span>{Math.round(track.energy * 100)}% Energy</span>
-                </div>
-                <span className="font-mono">{track.key}</span>
-              </div>
-            </div>
-          ) : (
-            <div className="text-center py-8 text-gray-400">
-              <Music className="h-12 w-12 mx-auto mb-2 opacity-50" />
-              <p>No track loaded</p>
-            </div>
-          )}
-        </div>
-
-        {/* Audio Visualizer */}
-        <div className="bg-black rounded-lg p-4">
-          <AudioVisualizer isPlaying={isPlaying} className="mx-auto" />
-        </div>
-
-        <PlaybackSlider track={track} deckName={deck} />
-
-        {/* Transport Controls */}
-        <div className="flex justify-center space-x-2">
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={!track}
-            onClick={() => scrubDeck(deck === "A" ? "deckA" : "deckB", 0)}
-          >
-            <SkipBack className="h-4 w-4" />
-          </Button>
-          <Button
-            variant={isPlaying ? "default" : "outline"}
-            size="sm"
-            onClick={onPlayPause}
-            disabled={!track}
-            className="w-16"
-          >
-            {isPlaying ? (
-              <Pause className="h-4 w-4" />
-            ) : (
-              <Play className="h-4 w-4" />
-            )}
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={!track}
-            onClick={() => console.log("skip forward")}
-          >
-            <SkipForward className="h-4 w-4" />
-          </Button>
-        </div>
-
-        {/* Volume Control */}
-        <div className="space-y-2">
+    return (
+      <Card className="w-full">
+        <CardHeader className="pb-4">
           <div className="flex items-center justify-between">
-            <label className="text-sm font-medium text-gray-700 flex items-center">
-              <Volume2 className="h-4 w-4 mr-1" />
-              Volume
-            </label>
-            <span className="text-sm text-gray-500">{volume[0]}%</span>
+            <CardTitle className="text-lg font-bold text-gray-900">
+              Deck {deck}
+            </CardTitle>
+            <div className="flex items-center space-x-2">
+              <Music className="h-4 w-4 text-gray-500" />
+              <span className="text-sm text-gray-500">
+                {track ? formatBPM(track.bpm) : "No Track"}
+              </span>
+            </div>
           </div>
-          <Slider
-            value={volume}
-            onValueChange={setVolume}
-            max={100}
-            step={1}
-            className="w-full"
-          />
-        </div>
+        </CardHeader>
 
-        {/* BPM Control */}
-        {/* <BPMControl deck={deck === "A" ? "deckA" : "deckB"} /> */}
-
-        {/* Quick Load from Queue */}
-        <div className="space-y-2">
-          <h4 className="text-sm font-medium text-gray-700">Quick Load</h4>
-          <div className="space-y-1 max-h-32 overflow-y-auto">
-            {queue.queue.slice(0, 5).map((queueTrack) => {
-              // Find the original track with full info from job.tracks
-              const fullTrack = job.tracks?.find((t) => t.id === queueTrack.id);
-              if (!fullTrack) return null;
-
-              return (
-                <button
-                  key={queueTrack.id}
-                  onClick={() => onLoad(fullTrack)}
-                  className="w-full text-left p-2 text-xs bg-gray-50 hover:bg-gray-100 rounded border transition-colors"
-                >
-                  <div className="truncate">{queueTrack.title}</div>
-                  <div className="text-gray-500 truncate">
-                    {queueTrack.artist}
+        <CardContent className="space-y-4">
+          {/* Track Info */}
+          <div className="bg-gray-50 rounded-lg p-4">
+            {track ? (
+              <div className="space-y-2">
+                <h3 className="font-semibold text-gray-900 truncate">
+                  {track.title}
+                </h3>
+                <p className="text-sm text-gray-600 truncate">{track.artist}</p>
+                <div className="flex items-center justify-between text-xs text-gray-500">
+                  <div className="flex items-center space-x-1">
+                    <Clock className="h-3 w-3" />
+                    <span>{formatTime(track.duration)}</span>
                   </div>
-                </button>
-              );
-            })}
+                  <div className="flex items-center space-x-1">
+                    <Zap className="h-3 w-3" />
+                    <span>{Math.round(track.energy * 100)}% Energy</span>
+                  </div>
+                  <span className="font-mono">{track.key}</span>
+                </div>
+              </div>
+            ) : (
+              <div className="text-center py-8 text-gray-400">
+                <Music className="h-12 w-12 mx-auto mb-2 opacity-50" />
+                <p>No track loaded</p>
+              </div>
+            )}
           </div>
-        </div>
-      </CardContent>
-    </Card>
-  );
+
+          {/* Audio Visualizer */}
+          <div className="bg-black rounded-lg p-4">
+            <AudioVisualizer isPlaying={isPlaying} className="mx-auto" />
+          </div>
+
+          <PlaybackSlider track={track} deckName={deck} />
+
+          {/* Transport Controls */}
+          <div className="flex justify-center space-x-2">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={!track}
+              onClick={() => scrubDeck(deck === "A" ? "deckA" : "deckB", 0)}
+            >
+              <SkipBack className="h-4 w-4" />
+            </Button>
+            <Button
+              variant={isPlaying ? "default" : "outline"}
+              size="sm"
+              onClick={onPlayPause}
+              disabled={!track}
+              className="w-16"
+            >
+              {isPlaying ? (
+                <Pause className="h-4 w-4" />
+              ) : (
+                <Play className="h-4 w-4" />
+              )}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={!track}
+              onClick={() => console.log("skip forward")}
+            >
+              <SkipForward className="h-4 w-4" />
+            </Button>
+          </div>
+
+          {/* Volume Control */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <label className="text-sm font-medium text-gray-700 flex items-center">
+                <Volume2 className="h-4 w-4 mr-1" />
+                Volume
+              </label>
+              <span className="text-sm text-gray-500">{volume[0]}%</span>
+            </div>
+            <Slider
+              value={volume}
+              onValueChange={setVolume}
+              max={100}
+              step={1}
+              className="w-full"
+            />
+          </div>
+
+          {/* BPM Control */}
+          <BPMSlider deckName={deck} />
+
+          {/* Quick Load from Queue */}
+          <div className="space-y-2">
+            <h4 className="text-sm font-medium text-gray-700">Quick Load</h4>
+            <div className="space-y-1 max-h-32 overflow-y-auto">
+              {queue.queue.slice(0, 5).map((queueTrack) => {
+                // Find the original track with full info from job.tracks
+                const fullTrack = job.tracks?.find(
+                  (t) => t.id === queueTrack.id
+                );
+                if (!fullTrack) return null;
+
+                return (
+                  <button
+                    key={queueTrack.id}
+                    onClick={() => onLoad(fullTrack)}
+                    className="w-full text-left p-2 text-xs bg-gray-50 hover:bg-gray-100 rounded border transition-colors"
+                  >
+                    <div className="truncate">{queueTrack.title}</div>
+                    <div className="text-gray-500 truncate">
+                      {queueTrack.artist}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  };
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-black text-white">
@@ -402,7 +407,7 @@ export default function Player({ data }: { data: Promise<AnalysisJob> }) {
           <DeckCard
             deck="A"
             track={deckA?.track || null}
-            isPlaying={deckA?.isPlaying || false}
+            audioElement={deckA?.audioElement || null}
             volume={volumeA}
             setVolume={setVolumeA}
             onPlayPause={() => handlePlayPause("A")}
@@ -489,7 +494,7 @@ export default function Player({ data }: { data: Promise<AnalysisJob> }) {
           <DeckCard
             deck="B"
             track={deckB?.track || null}
-            isPlaying={deckB?.isPlaying || false}
+            audioElement={deckB?.audioElement || null}
             volume={volumeB}
             setVolume={setVolumeB}
             onPlayPause={() => handlePlayPause("B")}

@@ -83,6 +83,23 @@ async def test_audio_analysis(file_path: str = None):
         print(f"🗣️  Speechiness: {result.get('speechiness', 'N/A')}")
         print(f"🔊 Loudness: {result.get('loudness', 'N/A')} dB")
         
+        # Beat analysis information
+        print(f"\n🥁 Beat Analysis:")
+        print(f"   Beat Count: {result.get('beat_count', 'N/A')}")
+        print(f"   Beat Confidence: {result.get('beat_confidence', 'N/A')}")
+        print(f"   Beat Regularity: {result.get('beat_regularity', 'N/A')}")
+        print(f"   Average Beat Interval: {result.get('average_beat_interval', 'N/A')}s")
+        
+        # Show first few beat timestamps
+        beat_timestamps = result.get('beat_timestamps', [])
+        if beat_timestamps:
+            print(f"   First 10 Beat Timestamps: {[round(t, 2) for t in beat_timestamps[:10]]}")
+            print(f"   Total Beat Timestamps: {len(beat_timestamps)}")
+        
+        beat_intervals = result.get('beat_intervals', [])
+        if beat_intervals and len(beat_intervals) > 0:
+            print(f"   Beat Interval Range: {min(beat_intervals):.3f}s - {max(beat_intervals):.3f}s")
+        
         # Additional info
         print(f"\n📋 Analysis Info:")
         print(f"   Version: {result.get('analysis_version', 'N/A')}")
@@ -92,7 +109,7 @@ async def test_audio_analysis(file_path: str = None):
         expected_features = [
             'bpm', 'key', 'energy', 'danceability', 'valence', 
             'acousticness', 'instrumentalness', 'liveness', 
-            'speechiness', 'loudness'
+            'speechiness', 'loudness', 'beat_timestamps', 'beat_confidence'
         ]
         
         missing_features = [f for f in expected_features if result.get(f) is None]
@@ -100,7 +117,7 @@ async def test_audio_analysis(file_path: str = None):
             print(f"\n⚠️  Warning: Some features could not be analyzed: {missing_features}")
             return False
         else:
-            print("\n✅ All audio features successfully extracted!")
+            print("\n✅ All audio features and beat analysis successfully extracted!")
             return True
         
     except Exception as e:

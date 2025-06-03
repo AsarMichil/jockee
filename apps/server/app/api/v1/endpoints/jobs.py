@@ -264,6 +264,12 @@ async def get_job_results(job_id: str, db: Session = Depends(get_db)):
                     bpm=transition.track_a.bpm,
                     key=transition.track_a.key,
                     energy=transition.track_a.energy,
+                    beat_timestamps=transition.track_a.beat_timestamps,
+                    beat_intervals=transition.track_a.beat_intervals,
+                    beat_confidence=transition.track_a.beat_confidence,
+                    beat_confidence_scores=transition.track_a.beat_confidence_scores,
+                    beat_regularity=transition.track_a.beat_regularity,
+                    average_beat_interval=transition.track_a.average_beat_interval,
                 )
 
                 track_b_summary = TrackSummary(
@@ -276,6 +282,12 @@ async def get_job_results(job_id: str, db: Session = Depends(get_db)):
                     bpm=transition.track_b.bpm,
                     key=transition.track_b.key,
                     energy=transition.track_b.energy,
+                    beat_timestamps=transition.track_b.beat_timestamps,
+                    beat_intervals=transition.track_b.beat_intervals,
+                    beat_confidence=transition.track_b.beat_confidence,
+                    beat_confidence_scores=transition.track_b.beat_confidence_scores,
+                    beat_regularity=transition.track_b.beat_regularity,
+                    average_beat_interval=transition.track_b.average_beat_interval,
                 )
 
                 # Add tracks to the unique tracks list

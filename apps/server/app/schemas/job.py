@@ -8,7 +8,7 @@ from app.schemas.track import TrackSummary
 class PlaylistAnalysisOptions(BaseModel):
     auto_fetch_missing: bool = True
     max_tracks: int = 50
-    skip_analysis_if_exists: bool = True
+    skip_analysis_if_exists: bool = False
     download_timeout: int = 300  # seconds
 
 

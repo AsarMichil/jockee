@@ -34,6 +34,9 @@ class AudioAnalyzer:
             "liveness": None,
             "speechiness": None,
             "loudness": None,
+            "beat_timestamps": None,
+            "beat_intervals": None,
+            "beat_confidence": None,
             "analysis_version": self.analysis_version,
             "analyzed_at": datetime.utcnow(),
             "analysis_error": None,
@@ -104,8 +107,31 @@ class AudioAnalyzer:
             # Extract tempo and beats
             tempo, beats = librosa.beat.beat_track(y=y, sr=sr)
 
-            # Get more detailed tempo analysis using the new function location
+            # Convert beat frames to timestamps (seconds)
+            beat_timestamps = librosa.frames_to_time(beats, sr=sr) if beats is not None else []
+            
+            # Calculate beat intervals (time between consecutive beats)
+            beat_intervals = []
+            if len(beat_timestamps) > 1:
+                beat_intervals = [beat_timestamps[i+1] - beat_timestamps[i] 
+                                for i in range(len(beat_timestamps)-1)]
+            
+            # Calculate beat confidence using onset strength
             onset_envelope = librosa.onset.onset_strength(y=y, sr=sr)
+            
+            # Get beat confidence scores
+            beat_confidence_scores = []
+            if beats is not None and len(beats) > 0:
+                # Sample onset strength at beat locations
+                beat_frames = beats.astype(int)
+                valid_frames = beat_frames[beat_frames < len(onset_envelope)]
+                if len(valid_frames) > 0:
+                    beat_confidence_scores = onset_envelope[valid_frames].tolist()
+            
+            # Calculate overall beat confidence (average strength at beat locations)
+            overall_beat_confidence = float(np.mean(beat_confidence_scores)) if beat_confidence_scores else 0.0
+
+            # Get more detailed tempo analysis using the new function location
             try:
                 # Try the new location first (librosa >= 0.10.0)
                 tempo_detailed = librosa.feature.rhythm.tempo(onset_envelope=onset_envelope, sr=sr)
@@ -125,14 +151,39 @@ class AudioAnalyzer:
             elif bpm > 200:
                 bpm /= 2  # Halve if too fast
 
+            # Calculate beat regularity (coefficient of variation of beat intervals)
+            beat_regularity = 0.0
+            if len(beat_intervals) > 1:
+                mean_interval = np.mean(beat_intervals)
+                std_interval = np.std(beat_intervals)
+                if mean_interval > 0:
+                    # Lower coefficient of variation = more regular beats
+                    cv = std_interval / mean_interval
+                    beat_regularity = max(0.0, 1.0 - cv)  # Convert to 0-1 scale
+
             return {
                 "bpm": round(bpm, 2),
                 "beat_count": len(beats) if beats is not None else 0,
+                "beat_timestamps": [round(float(t), 4) for t in beat_timestamps],
+                "beat_intervals": [round(float(interval), 4) for interval in beat_intervals],
+                "beat_confidence": round(overall_beat_confidence, 3),
+                "beat_confidence_scores": [round(float(score), 3) for score in beat_confidence_scores],
+                "beat_regularity": round(beat_regularity, 3),
+                "average_beat_interval": round(float(np.mean(beat_intervals)), 4) if beat_intervals else None,
             }
 
         except Exception as e:
             logger.warning(f"Tempo analysis failed: {e}")
-            return {"bpm": None, "beat_count": 0}
+            return {
+                "bpm": None, 
+                "beat_count": 0,
+                "beat_timestamps": [],
+                "beat_intervals": [],
+                "beat_confidence": 0.0,
+                "beat_confidence_scores": [],
+                "beat_regularity": 0.0,
+                "average_beat_interval": None,
+            }
 
     def _analyze_key(self, y: np.ndarray, sr: int) -> Dict[str, Any]:
         """Analyze musical key using chroma features."""

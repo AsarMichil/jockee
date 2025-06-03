@@ -8,6 +8,23 @@ export interface Track {
   bpm: number;
   key: string;
   energy: number;
+  
+  // Beat analysis fields for beat matching
+  beat_timestamps?: number[];
+  beat_intervals?: number[];
+  beat_confidence?: number;
+  beat_confidence_scores?: number[];
+  beat_regularity?: number;
+  average_beat_interval?: number;
+  
+  // Additional audio analysis fields
+  danceability?: number;
+  valence?: number;
+  acousticness?: number;
+  instrumentalness?: number;
+  liveness?: number;
+  speechiness?: number;
+  loudness?: number;
 }
 
 export interface Transition {

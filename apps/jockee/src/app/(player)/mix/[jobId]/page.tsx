@@ -10,7 +10,7 @@ export default function MixPage() {
   const params = useParams();
   const jobId = params.jobId as string;
   const data = analysisApi.getJobResults(jobId);
-
+  console.log("data", data);
   return (
     <div>
       <div onClick={() => router.push(`/mix/${jobId}`)}>MixPage</div>

@@ -8,7 +8,7 @@ export const AudioSlider = ({ deckName }: { deckName: "A" | "B" }) => {
   const derivedDeckName = deckName === "A" ? "deckA" : "deckB";
   const deck = useAudioStore((state) => state[derivedDeckName]);
   const setDeckVolume = useAudioStore((state) => state.setDeckVolume);
-  const [volume, setVolume] = useState([deck?.volume || 0]);
+  const [volume, setVolume] = useState([deck?.audioElement?.volume || 0]);
   const setVolumeHandler = (value: number[]) => {
     const newVolume = value[0] / 100;
     setVolume(value);
@@ -22,7 +22,7 @@ export const AudioSlider = ({ deckName }: { deckName: "A" | "B" }) => {
     const animate = () => {
       // Update slider positions only when decks are playing
       if (deck?.isAnimating && audioContext) {
-        const currentVolume = deck.volume;
+        const currentVolume = deck.audioElement?.volume || 0;
         setVolume([currentVolume]);
       }
 
@@ -31,7 +31,7 @@ export const AudioSlider = ({ deckName }: { deckName: "A" | "B" }) => {
         animationFrameId = requestAnimationFrame(animate);
       }
       if (!deck?.isAnimating && audioContext) {
-        const volume = deck?.volume;
+        const volume = deck?.audioElement?.volume || 0;
         if (volume) {
           setVolume([volume]);
         }

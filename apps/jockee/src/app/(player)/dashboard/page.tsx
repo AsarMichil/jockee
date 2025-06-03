@@ -37,8 +37,8 @@ export default function DashboardPage() {
         try {
           const userProfile = await authApi.getCurrentUser();
           setUser(userProfile);
-        } catch (err) {
-          console.log("User profile not available yet");
+        } catch (error) {
+          console.error("Error fetching user profile:", error);
         }
 
         // Fetch user's playlists

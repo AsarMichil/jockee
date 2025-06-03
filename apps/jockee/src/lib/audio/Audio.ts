@@ -12,22 +12,31 @@ export interface Track {
   bpm: number;
   key: string;
   energy: number;
+  
+  // Beat analysis fields for beat matching
+  beat_timestamps?: number[];
+  beat_intervals?: number[];
+  beat_confidence?: number;
+  beat_confidence_scores?: number[];
+  beat_regularity?: number;
+  average_beat_interval?: number;
+  
+  // Additional audio analysis fields
+  danceability?: number;
+  valence?: number;
+  acousticness?: number;
+  instrumentalness?: number;
+  liveness?: number;
+  speechiness?: number;
+  loudness?: number;
 }
 
-interface DeckState {
+export interface DeckState {
   track: Track | null;
-  isPlaying: boolean;
-  volume: number;
-  pitch: number; // Pitch adjustment (-8% to +8%)
-  cuePoint: number;
-  audioSource: AudioBufferSourceNode | null;
-  audioBuffer: AudioBuffer | null;
-  gainNode: GainNode | null;
+  audioElement: HTMLAudioElement | null;
   isLoading: boolean;
   isLoaded: boolean;
-  currentPosition: number; // not actually current position, but the position of the track when the deck was paused
-  startTime: number; // when the deck was started
-  isPaused: boolean;
+  cuePoint: number;
   isAnimating: boolean;
 }
 
@@ -71,6 +80,7 @@ export type AudioPlayerStoreActions = {
   scrubDeck: (deck: "deckA" | "deckB", position: number) => void;
   pauseDeck: (deck: "deckA" | "deckB") => void;
   setDeckVolume: (deck: "deckA" | "deckB", volume: number) => void;
+  setDeckBpm: (deck: "deckA" | "deckB", bpm: number) => void;
 
   setMasterVolume: (volume: number) => void;
 
@@ -151,11 +161,8 @@ export const createAudioPlayerStore = (
 
     // === ENHANCED DECK MANAGEMENT ===
     loadTrack: async (track: Track, deck: "deckA" | "deckB") => {
+      console.log("loadTrack", track, deck);
       try {
-        const audioContextManager = get().audioContextManager;
-        if (!audioContextManager) {
-          throw new Error("Audio context manager not initialized");
-        }
         const deckState = get()[deck];
         if (deckState?.isLoading) {
           console.log(`Track "${track.title}" is already loading`);
@@ -165,23 +172,26 @@ export const createAudioPlayerStore = (
           console.log(`Track "${track.title}" is already loaded onto ${deck}`);
           return;
         }
-        // set loading and clear old state if it exists
-        deckState?.audioSource?.stop();
-        deckState?.audioSource?.disconnect();
+
+        // Clean up old audio element
+        if (deckState?.audioElement) {
+          deckState.audioElement.pause();
+          deckState.audioElement.src = "";
+          deckState.audioElement.load();
+        }
+
+        // Set loading state
         set(() => ({
           [deck]: {
             ...deckState,
             isLoading: true,
             isLoaded: false,
-            audioSource: null,
-            startTime: 0,
-            currentPosition: 0,
-            isPaused: false
+            audioElement: null
           }
         }));
-        const newDeckState = await loadTrack(audioContextManager, track);
+
+        const newDeckState = await loadTrack(track);
         set(() => ({ [deck]: newDeckState }));
-        console.log("new deck state please", get()[deck]);
         console.log(`Track "${track.title}" loaded onto ${deck}`);
       } catch (error) {
         console.error(`Failed to load track onto ${deck}:`, error);
@@ -192,9 +202,8 @@ export const createAudioPlayerStore = (
             ...state[deck],
             track,
             isLoaded: false,
-            audioBuffer: null,
-            audioSource: null,
-            gainNode: null
+            audioElement: null,
+            isLoading: false
           }
         }));
         throw error;
@@ -204,36 +213,13 @@ export const createAudioPlayerStore = (
     scrubDeck: (deck: "deckA" | "deckB", position: number) => {
       const deckState = get()[deck];
       console.log("scrubDeck", deck, position);
-      if (!deckState) {
-        console.log(`Deck ${deck} not found, you are an idiot`);
+      if (!deckState?.audioElement) {
+        console.log(`Deck ${deck} audio element not found`);
         return;
-      }
-      const audioContextManager = get().audioContextManager;
-      if (!audioContextManager) {
-        throw new Error("Audio context manager not initialized");
-      }
-      const audioContext = audioContextManager.getContext();
-      if (!audioContext) {
-        throw new Error("Audio context not available");
       }
 
-      // if playing just play again with the new position as the offset
-      if (deckState.isPlaying) {
-        if (!deckState.track?.id) {
-          throw new Error("Track ID not available");
-        }
-        // play the deck again with the new position as the offset
-        get().playDeck(deck, deckState.track.id, position);
-        return;
-      } else {
-        const newDeckState = {
-          ...deckState,
-          currentPosition: position,
-          isPaused: true
-        };
-        set(() => ({ [deck]: newDeckState }));
-        return;
-      }
+      // Set the audio element's current time directly
+      deckState.audioElement.currentTime = position;
     },
 
     autoplayNextTrack: async (deck: "deckA" | "deckB") => {
@@ -242,7 +228,7 @@ export const createAudioPlayerStore = (
       const queue = get().queue;
       console.log("queue is currently", queue);
       if (!deckState) {
-        console.log(`Deck ${deck} not found, you are an idiot`);
+        console.log(`Deck ${deck} not found`);
         return;
       }
       const queuePositionBefore = queue.currentIndex;
@@ -250,16 +236,18 @@ export const createAudioPlayerStore = (
       const queuePositionAfter = get().queue.currentIndex;
       if (queuePositionAfter === queuePositionBefore) {
         console.log("queue is empty clearing deck:", deck);
+        // Clean up audio element
+        if (deckState.audioElement) {
+          deckState.audioElement.pause();
+          deckState.audioElement.src = "";
+          deckState.audioElement.load();
+        }
         const newDeckState = {
           ...deckState,
-          isPlaying: false,
-          audioSource: null,
-          isPaused: false,
-          currentPosition: 0,
-          startTime: 0,
           isLoading: false,
           isLoaded: false,
-          track: null
+          track: null,
+          audioElement: null
         };
         set(() => ({ [deck]: newDeckState, autoplay: false }));
         return;
@@ -275,157 +263,113 @@ export const createAudioPlayerStore = (
       offset: number | undefined
     ) => {
       const deckState = get()[deck];
-      if (!deckState) {
-        console.log(`Deck ${deck} not found, you are an idiot`);
+      if (!deckState?.audioElement) {
+        console.log(`Deck ${deck} audio element not found`);
         return;
       }
 
       if (!deckState.isLoaded) {
-        console.log(`Deck ${deck} is not loaded, you are an idiot`);
+        console.log(`Deck ${deck} is not loaded`);
         return;
       }
 
-      if (deckState.isPlaying) {
-        console.log(
-          `Deck ${deck} is already playing, you are an idiot`,
-          deckState.audioSource
-        );
-        // stop the deck
-        deckState.audioSource?.stop();
-        deckState.audioSource?.disconnect();
-        // remove the onended listener
-        if (deckState.audioSource) {
-          deckState.audioSource.onended = null;
-        }
-        deckState.audioSource = null;
-        const newDeckState = { ...deckState, isPlaying: false };
-        set(() => ({ [deck]: newDeckState }));
-      }
-      const audioContextManager = get().audioContextManager;
-      if (!audioContextManager) {
-        throw new Error("Audio context manager not initialized");
-      }
-
-      let trackOffset: number;
+      // Set offset if provided
       if (offset !== undefined) {
-        console.log("offset balls", offset);
-        trackOffset = offset;
-      } else {
-        console.log("no offset balls");
-        trackOffset = deckState.isPaused ? deckState.currentPosition : 0;
-      }
-      console.log(
-        `${
-          deckState.isPaused ? "Resuming" : "Playing"
-        } deck ${deck} with offset ${trackOffset}`
-      );
-
-      const newDeckState = playDeck(
-        audioContextManager,
-        deckState,
-        trackId,
-        trackOffset
-      );
-
-      if (newDeckState.audioSource) {
-        newDeckState.audioSource.onended = () => {
-          const deckState = get()[deck];
-          if (!deckState) {
-            console.log(`Deck ${deck} not found, you are an idiot`);
-            return;
-          }
-          // if not playing, stop the deck
-          if (deckState.isPlaying) {
-            console.log("current queue", get().queue);
-            if (get().autoplay) {
-              get().autoplayNextTrack(deck);
-            } else {
-              const updatedDeckState = {
-                isPlaying: false,
-                isAnimating: false,
-                audioSource: null,
-                isPaused: false,
-                currentPosition: 0,
-                startTime: 0,
-                isLoading: false,
-                isLoaded: false,
-                track: null
-              };
-              set(() => ({ [deck]: updatedDeckState }));
-            }
-          }
-        };
+        deckState.audioElement.currentTime = offset;
       }
 
-      set(() => ({ [deck]: newDeckState }));
+      // Add ended event listener for autoplay functionality
+      const handleEnded = () => {
+        console.log(`Track ended on ${deck}`);
+        if (get().autoplay) {
+          get().autoplayNextTrack(deck);
+        } else {
+          // Clear the track and reset the deck state
+          const newDeckState = {
+            ...deckState,
+            isLoading: false,
+            isLoaded: false,
+            track: null,
+            audioElement: null
+          };
+          set(() => ({ [deck]: newDeckState }));
+        }
+      };
+
+      const handlePlaying = () => {
+        console.log(`Track started on ${deck}`);
+        set((state) => ({ [deck]: { ...state[deck], isPlaying: true } }));
+      };
+      const handlePaused = () => {
+        console.log(`Track paused on ${deck}`);
+        set((state) => ({ [deck]: { ...state[deck], isPlaying: false } }));
+      };
+
+      // Remove any existing ended listener and add new one
+      deckState.audioElement.removeEventListener("ended", handleEnded);
+      deckState.audioElement.addEventListener("ended", handleEnded);
+      deckState.audioElement.removeEventListener("playing", handlePlaying);
+      deckState.audioElement.removeEventListener("pause", handlePaused);
+      deckState.audioElement.addEventListener("playing", handlePlaying);
+      deckState.audioElement.addEventListener("pause", handlePaused);
+
+      // Play the audio element
+      deckState.audioElement.play().catch((error) => {
+        console.error(`Failed to play deck ${deck}:`, error);
+      });
     },
 
     pauseDeck: (deck: "deckA" | "deckB") => {
       const deckState = get()[deck];
-      if (!deckState) {
-        console.log(`Deck ${deck} not found, you are an idiot`);
+      if (!deckState?.audioElement) {
+        console.log(`Deck ${deck} audio element not found`);
         return;
       }
-      const audioContextManager = get().audioContextManager;
-      if (!audioContextManager) {
-        throw new Error("Audio context manager not initialized");
-      }
+
       if (!deckState.isLoaded) {
-        console.log(`Deck ${deck} is not loaded, you are an idiot`);
+        console.log(`Deck ${deck} is not loaded`);
         return;
       }
-      if (!deckState.isPlaying) {
-        console.log(`Deck ${deck} is not playing, you are an idiot`);
-        return;
-      }
-      const newDeckState = pauseDeck(audioContextManager, deckState);
-      set(() => ({ [deck]: newDeckState }));
+
+      // Pause the audio element
+      deckState.audioElement.pause();
+      console.log(
+        `paused deck ${deck} at: ${deckState.audioElement.currentTime}`
+      );
     },
 
     setDeckVolume: (deck: "deckA" | "deckB", volume: number) => {
       const deckState = get()[deck];
-      if (!deckState) {
-        throw new Error(`Deck ${deck} not found`);
+      if (!deckState?.audioElement) {
+        throw new Error(`Deck ${deck} audio element not found`);
       }
-      const audioContextManager = get().audioContextManager;
-      if (!audioContextManager) {
-        throw new Error("Audio context manager not initialized");
-      }
-      ensureContextIsResumed(audioContextManager);
-      const audioContext = audioContextManager.getContext();
-      if (!audioContext) {
-        throw new Error("Audio context not available");
-      }
-      if (!deckState.gainNode) {
-        throw new Error("Gain node not available");
-      }
-      deckState.gainNode.gain.value = volume;
-      const newDeckState = { ...deckState };
-      set(() => ({ [deck]: newDeckState }));
+
+      // Set volume directly on audio element
+      deckState.audioElement.volume = volume;
     },
-    recalculateDeckPosition: (deck: "deckA" | "deckB") => {
+
+    setDeckBpm: (deck: "deckA" | "deckB", bpm: number) => {
       const deckState = get()[deck];
-      if (!deckState) {
-        return;
+      if (!deckState?.audioElement) {
+        throw new Error(`Deck ${deck} audio element not found`);
       }
-      if (deckState.isPlaying) {
-        const audioContextManager = get().audioContextManager;
-        if (!audioContextManager) {
-          throw new Error("Audio context manager not initialized");
-        }
-        const audioContext = audioContextManager.getContext();
-        if (!audioContext) {
-          throw new Error("Audio context not available");
-        }
-        const currentTime = audioContext.currentTime;
-        const deckPosition = currentTime - deckState.startTime;
-        set((state) => ({
-          ...state,
-          [deck]: {
-            ...state[deck],
-            currentPosition: deckPosition
-          }
-        }));
+      const trackBpm = deckState.track?.bpm;
+      if (!trackBpm) {
+        throw new Error(`Track ${deckState.track?.title} has no BPM`);
+      }
+      if (bpm < 0) {
+        throw new Error(`BPM cannot be less than 0, not in spec`);
+      }
+      const playbackRate = bpm / trackBpm; // 1.0 is normal speed
+      deckState.audioElement.playbackRate = playbackRate;
+    },
+
+    recalculateDeckPosition: (deck: "deckA" | "deckB") => {
+      // This is no longer needed as audio element maintains currentTime automatically
+      // but keeping for compatibility - audio elements handle position tracking internally
+      const deckState = get()[deck];
+      if (deckState?.audioElement) {
+        // No-op: audio element maintains currentTime automatically
       }
     }
   }));
@@ -438,152 +382,49 @@ export const createAudioPlayerStore = (
   return store;
 };
 
-/**
- * Load audio from URL using fetch with proper streaming support
- */
-async function loadAudioFromUrl(
-  audioContext: AudioContext,
-  url: string
-): Promise<AudioBuffer> {
-  try {
-    const response = await fetch(url, {
-      headers: {
-        "Accept": "audio/*"
-      }
-    });
-
-    if (!response.ok) {
-      throw new Error(
-        `Failed to fetch audio: ${response.status} ${response.statusText}`
-      );
-    }
-
-    const arrayBuffer = await response.arrayBuffer();
-    const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
-
-    console.log(
-      `Audio loaded successfully. Duration: ${audioBuffer.duration}s`
-    );
-    return audioBuffer;
-  } catch (error) {
-    console.error("Error loading audio from URL:", error);
-    throw error;
-  }
-}
-
-const loadTrack = async (
-  audioContextManager: AudioContextManager,
-  track: Track
-) => {
-  ensureContextIsResumed(audioContextManager);
-
-  if (!audioContextManager) {
-    throw new Error("Audio context manager not initialized");
-  }
-
-  const audioContext = audioContextManager.getContext();
-  if (!audioContext) {
-    throw new Error("Audio context not available");
-  }
-
-  // Get audio URL and load the audio buffer
+const loadTrack = async (track: Track): Promise<DeckState> => {
+  // Get audio URL
   const audioUrl = await analysisApi.getTrackAudioUrl(track.id);
-  const audioBuffer = await loadAudioFromUrl(audioContext, audioUrl.url);
 
-  // Create gain node for this deck
-  const gainNode = audioContext.createGain();
-  gainNode.connect(
-    audioContextManager.getMasterGain() || audioContext.destination
-  );
+  // Create audio element
+  const audioElement = new Audio();
+  audioElement.src = audioUrl.url;
+  audioElement.preload = "auto";
+  audioElement.crossOrigin = "anonymous";
+  audioElement.defaultPlaybackRate = 1.0;
+
+  // Wait for audio to be ready
+  await new Promise<void>((resolve, reject) => {
+    const handleCanPlay = () => {
+      audioElement.removeEventListener("canplaythrough", handleCanPlay);
+      audioElement.removeEventListener("error", handleError);
+      resolve();
+    };
+
+    const handleError = () => {
+      audioElement.removeEventListener("canplaythrough", handleCanPlay);
+      audioElement.removeEventListener("error", handleError);
+      reject(new Error("Failed to load audio"));
+    };
+
+    audioElement.addEventListener("canplaythrough", handleCanPlay);
+    audioElement.addEventListener("error", handleError);
+
+    // Start loading
+    audioElement.load();
+  });
+
+  console.log(`Audio loaded successfully. Duration: ${audioElement.duration}s`);
 
   // Create new deck state
   const newDeckState: DeckState = {
     track,
-    isPlaying: false,
-    volume: 0.8,
-    pitch: 0,
-    cuePoint: 0,
-    audioSource: null, // Will be created when playing
-    audioBuffer,
-    gainNode,
+    audioElement,
     isLoading: false,
     isLoaded: true,
-    currentPosition: 0,
-    startTime: 0,
-    isPaused: false,
+    cuePoint: 0,
     isAnimating: true
   };
-  return newDeckState;
-};
 
-const ensureContextIsResumed = (audioContextManager: AudioContextManager) => {
-  audioContextManager.resume();
-};
-
-const playDeck = (
-  audioContextManager: AudioContextManager,
-  deck: DeckState,
-  trackId: string,
-  offset: number
-) => {
-  ensureContextIsResumed(audioContextManager);
-
-  const audioContext = audioContextManager.getContext();
-  if (!audioContext) {
-    throw new Error("Audio context not available");
-  }
-
-  const audioBuffer = deck.audioBuffer;
-  if (!audioBuffer) {
-    throw new Error("Audio buffer not available");
-  }
-
-  const audioSource = audioContext.createBufferSource();
-  audioSource.buffer = audioBuffer;
-  if (!deck.gainNode) {
-    deck.gainNode = audioContextManager.setupGainNode();
-  }
-  audioSource.connect(deck.gainNode);
-  audioSource.start(0, offset);
-
-  const newDeckState: DeckState = {
-    ...deck,
-    audioSource,
-    isPlaying: true,
-    isPaused: false,
-    startTime: audioContext.currentTime - offset
-  };
-  return newDeckState;
-};
-
-const pauseDeck = (
-  audioContextManager: AudioContextManager,
-  deck: DeckState
-) => {
-  ensureContextIsResumed(audioContextManager);
-
-  const audioContext = audioContextManager.getContext();
-  if (!audioContext) {
-    throw new Error("Audio context not available");
-  }
-  if (deck.isPaused) {
-    console.log(`Deck ${deck} is already paused, you are an idiot`);
-    return;
-  }
-  if (!deck.audioSource) {
-    throw new Error("Audio source not available");
-  }
-  deck.audioSource.stop();
-  deck.audioSource.disconnect();
-  deck.audioSource = null;
-
-  const pausedTime = audioContext.currentTime - deck.startTime;
-  console.log(`Paused deck ${deck} at ${pausedTime}`);
-  const newDeckState: DeckState = {
-    ...deck,
-    isPlaying: false,
-    isPaused: true,
-    currentPosition: pausedTime
-  };
   return newDeckState;
 };

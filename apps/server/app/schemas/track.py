@@ -1,5 +1,5 @@
 from pydantic import BaseModel, UUID4
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime
 from app.models.track import FileSource
 
@@ -36,6 +36,15 @@ class TrackUpdate(BaseModel):
     liveness: Optional[float] = None
     speechiness: Optional[float] = None
     loudness: Optional[float] = None
+    
+    # Beat analysis fields
+    beat_timestamps: Optional[List[float]] = None
+    beat_intervals: Optional[List[float]] = None
+    beat_confidence: Optional[float] = None
+    beat_confidence_scores: Optional[List[float]] = None
+    beat_regularity: Optional[float] = None
+    average_beat_interval: Optional[float] = None
+    
     analysis_version: Optional[str] = None
     analyzed_at: Optional[datetime] = None
     analysis_error: Optional[str] = None
@@ -52,6 +61,15 @@ class TrackAnalysis(BaseModel):
     liveness: Optional[float] = None
     speechiness: Optional[float] = None
     loudness: Optional[float] = None
+    
+    # Beat analysis fields
+    beat_timestamps: Optional[List[float]] = None
+    beat_intervals: Optional[List[float]] = None
+    beat_confidence: Optional[float] = None
+    beat_confidence_scores: Optional[List[float]] = None
+    beat_regularity: Optional[float] = None
+    average_beat_interval: Optional[float] = None
+    
     analysis_version: str
     analyzed_at: Optional[datetime] = None
     analysis_error: Optional[str] = None
@@ -74,6 +92,14 @@ class Track(TrackBase):
     liveness: Optional[float] = None
     speechiness: Optional[float] = None
     loudness: Optional[float] = None
+
+    # Beat analysis fields
+    beat_timestamps: Optional[List[float]] = None
+    beat_intervals: Optional[List[float]] = None
+    beat_confidence: Optional[float] = None
+    beat_confidence_scores: Optional[List[float]] = None
+    beat_regularity: Optional[float] = None
+    average_beat_interval: Optional[float] = None
 
     # Analysis metadata
     analysis_version: Optional[str] = None
@@ -98,6 +124,14 @@ class TrackSummary(BaseModel):
     bpm: Optional[float] = None
     key: Optional[str] = None
     energy: Optional[float] = None
+    
+    # Include key beat analysis fields in summary
+    beat_timestamps: Optional[List[float]] = None
+    beat_intervals: Optional[List[float]] = None
+    beat_confidence: Optional[float] = None
+    beat_confidence_scores: Optional[List[float]] = None
+    beat_regularity: Optional[float] = None
+    average_beat_interval: Optional[float] = None
 
     class Config:
         from_attributes = True

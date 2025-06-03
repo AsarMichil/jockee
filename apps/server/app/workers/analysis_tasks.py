@@ -105,14 +105,14 @@ async def _analyze_playlist_async(task, job_id: str, spotify_access_token: str):
                     .first()
                 )
 
-                if existing_track and options.get("skip_analysis_if_exists", True):
+                if existing_track and options.get("skip_analysis_if_exists", False):
                     # Use existing track
                     track = existing_track
                     logger.info(f"Using existing track: {track.title}")
                 else:
                     # Create or update track
                     track = await process_single_track(
-                        db, spotify_track, audio_fetcher, audio_analyzer
+                        db, spotify_track, audio_fetcher, audio_analyzer, options
                     )
 
                 if track:
@@ -196,6 +196,7 @@ async def process_single_track(
     spotify_track: Dict[str, Any],
     audio_fetcher: AudioFetcher,
     audio_analyzer: AudioAnalyzer,
+    options: Dict[str, Any],
 ) -> Track:
     """Process a single track: create/update, fetch audio, analyze."""
 
@@ -241,7 +242,10 @@ async def process_single_track(
                 logger.warning(f"Failed to fetch audio: {fetch_result['error']}")
 
     # Analyze audio if we have a file and no analysis yet
-    if track.file_path and not track.analyzed_at:
+    skip_analysis_if_exists = options.get("skip_analysis_if_exists", False)
+    should_analyze = track.file_path and (not track.analyzed_at or not skip_analysis_if_exists)
+    
+    if should_analyze:
         logger.info(f"Analyzing audio for {track.title}")
 
         analysis_result = await audio_analyzer.analyze_track(track.file_path)
@@ -259,11 +263,21 @@ async def process_single_track(
             track.speechiness = float(analysis_result.get("speechiness")) if analysis_result.get("speechiness") is not None else None
             track.loudness = float(analysis_result.get("loudness")) if analysis_result.get("loudness") is not None else None
             
+            # Beat analysis results
+            track.beat_timestamps = analysis_result.get("beat_timestamps")
+            track.beat_intervals = analysis_result.get("beat_intervals")
+            track.beat_confidence = float(analysis_result.get("beat_confidence")) if analysis_result.get("beat_confidence") is not None else None
+            track.beat_confidence_scores = analysis_result.get("beat_confidence_scores")
+            track.beat_regularity = float(analysis_result.get("beat_regularity")) if analysis_result.get("beat_regularity") is not None else None
+            track.average_beat_interval = float(analysis_result.get("average_beat_interval")) if analysis_result.get("average_beat_interval") is not None else None
+            
             track.analysis_version = analysis_result["analysis_version"]
             track.analyzed_at = analysis_result["analyzed_at"]
         else:
             track.analysis_error = analysis_result["analysis_error"]
             logger.warning(f"Analysis failed for {track.title}: {track.analysis_error}")
+    elif track.analyzed_at and skip_analysis_if_exists:
+        logger.info(f"Skipping analysis for {track.title} - already analyzed")
 
     db.commit()
     return track

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Float, DateTime, Text, Enum
+from sqlalchemy import Column, String, Float, DateTime, Text, Enum, JSON
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 import uuid
@@ -41,6 +41,14 @@ class Track(Base):
     liveness = Column(Float)  # 0.0 to 1.0
     speechiness = Column(Float)  # 0.0 to 1.0
     loudness = Column(Float)  # dB
+
+    # Beat analysis results (for beat matching)
+    beat_timestamps = Column(JSON)  # Array of beat timestamps in seconds
+    beat_intervals = Column(JSON)  # Array of intervals between beats
+    beat_confidence = Column(Float)  # Overall beat detection confidence (0.0 to 1.0)
+    beat_confidence_scores = Column(JSON)  # Individual confidence scores for each beat
+    beat_regularity = Column(Float)  # Beat timing consistency (0.0 to 1.0)
+    average_beat_interval = Column(Float)  # Average time between beats in seconds
 
     # Analysis metadata
     analysis_version = Column(String, default="2.0.0")

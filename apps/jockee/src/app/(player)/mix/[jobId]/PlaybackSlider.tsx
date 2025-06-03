@@ -1,7 +1,7 @@
+import { useState, useEffect } from "react";
 import { Slider } from "@/components/ui/slider";
 import { useAudioStore } from "@/lib/audio/AudioStoreProvider";
 import { Track } from "@/lib/types";
-import { useEffect, useState } from "react";
 
 const formatTime = (seconds: number) => {
   const mins = Math.floor(seconds / 60);
@@ -16,43 +16,34 @@ export const PlaybackSlider = ({
   track: Track | null;
   deckName: "A" | "B";
 }) => {
-  const audioContext = useAudioStore((state) => state.audioContext);
   const scrubDeck = useAudioStore((state) => state.scrubDeck);
-  //   const recalculateDeckPosition = useAudioStore(
-  //     (state) => state.recalculateDeckPosition
-  //   );
   const derivedDeckName = deckName === "A" ? "deckA" : "deckB";
   const deck = useAudioStore((state) => state[derivedDeckName]);
-  const [position, setPosition] = useState([deck?.currentPosition || 0]);
+  const [position, setPosition] = useState([0]);
+  
   const setDeckPosition = (value: number[]) => {
     scrubDeck(derivedDeckName, value[0]);
   };
+
   // Animation loop for continuous slider updates
   useEffect(() => {
     let animationFrameId: number;
 
     const animate = () => {
-      // Update slider positions only when decks are playing
-      if (deck?.isPlaying && audioContext) {
-        const currentPosition = audioContext.currentTime - deck.startTime;
-        // recalculateDeckPosition(derivedDeckName);
-        setPosition([currentPosition]);
+      // Update slider positions from audio element's currentTime
+      if (deck?.audioElement) {
+        const currentTime = deck.audioElement.currentTime;
+        setPosition([currentTime]);
       }
 
-      // Continue animation if any deck is playing
-      if (deck?.isPlaying && audioContext) {
+      // Continue animation if deck has an audio element (whether playing or not)
+      if (deck?.audioElement) {
         animationFrameId = requestAnimationFrame(animate);
-      }
-      if (!deck?.isPlaying && audioContext) {
-        const position = deck?.currentPosition;
-        if (position) {
-          setPosition([position]);
-        }
       }
     };
 
-    // Start animation loop if any deck is playing
-    if (deck?.isPlaying && audioContext) {
+    // Start animation loop if deck has an audio element
+    if (deck?.audioElement) {
       animationFrameId = requestAnimationFrame(animate);
     }
 
@@ -62,7 +53,7 @@ export const PlaybackSlider = ({
         cancelAnimationFrame(animationFrameId);
       }
     };
-  }, [deck?.isPlaying, audioContext, deck, derivedDeckName]);
+  }, [deck?.audioElement]);
 
   return (
     <div className="space-y-2">
