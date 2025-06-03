@@ -233,6 +233,7 @@ async def get_job_results(job_id: str, db: Session = Depends(get_db)):
                 analyzed_tracks=job.analyzed_tracks,
                 downloaded_tracks=job.downloaded_tracks,
                 failed_tracks=job.failed_tracks,
+                tracks=[],  # Empty tracks array for failed jobs
                 mix_instructions=None,
                 error_message=job.error_message,
                 created_at=job.created_at,
@@ -241,12 +242,17 @@ async def get_job_results(job_id: str, db: Session = Depends(get_db)):
 
         # Job completed successfully
         mix_instructions = None
+        all_tracks = []
+        
         if job.result and hasattr(job, 'transitions') and job.transitions:
             # Build mix instructions from stored data
             from app.schemas.job import MixInstructions, MixTransitionResponse
             from app.schemas.track import TrackSummary
 
             transitions = []
+            # Keep track of unique tracks by ID to avoid duplicates
+            track_ids_seen = set()
+            
             for transition in job.transitions:
                 track_a_summary = TrackSummary(
                     id=transition.track_a.id,
@@ -271,6 +277,15 @@ async def get_job_results(job_id: str, db: Session = Depends(get_db)):
                     key=transition.track_b.key,
                     energy=transition.track_b.energy,
                 )
+
+                # Add tracks to the unique tracks list
+                if transition.track_a.id not in track_ids_seen:
+                    all_tracks.append(track_a_summary)
+                    track_ids_seen.add(transition.track_a.id)
+                
+                if transition.track_b.id not in track_ids_seen:
+                    all_tracks.append(track_b_summary)
+                    track_ids_seen.add(transition.track_b.id)
 
                 transition_response = MixTransitionResponse(
                     id=transition.id,
@@ -306,6 +321,7 @@ async def get_job_results(job_id: str, db: Session = Depends(get_db)):
             analyzed_tracks=job.analyzed_tracks,
             downloaded_tracks=job.downloaded_tracks,
             failed_tracks=job.failed_tracks,
+            tracks=all_tracks,
             mix_instructions=mix_instructions,
             error_message=job.error_message,
             created_at=job.created_at,

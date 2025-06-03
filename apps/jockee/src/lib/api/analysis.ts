@@ -1,10 +1,15 @@
-import { apiClient } from './client';
-import { AnalysisJob, MixInstructions } from '../types';
+import { apiClient } from "./client";
+import { AnalysisJob, MixInstructions } from "../types";
 
 export const analysisApi = {
   // Get job status
   getJobStatus: async (jobId: string): Promise<AnalysisJob> => {
     return await apiClient.get<AnalysisJob>(`/api/v1/jobs/${jobId}/status`);
+  },
+
+  // Get complete job results with tracks and mix instructions
+  getJobResults: async (jobId: string): Promise<AnalysisJob> => {
+    return await apiClient.get<AnalysisJob>(`/api/v1/jobs/${jobId}/results`);
   },
 
   // Get mix instructions
@@ -14,7 +19,7 @@ export const analysisApi = {
 
   // Get all user jobs
   getUserJobs: async (): Promise<AnalysisJob[]> => {
-    return await apiClient.get<AnalysisJob[]>('/api/v1/jobs');
+    return await apiClient.get<AnalysisJob[]>("/api/v1/jobs");
   },
 
   // Cancel job
@@ -24,11 +29,13 @@ export const analysisApi = {
 
   // Get audio file URL for a track
   getTrackAudioUrl: async (trackId: string): Promise<{ url: string }> => {
-    return await apiClient.get<{ url: string }>(`/api/v1/tracks/${trackId}/audio/url`);
+    return await apiClient.get<{ url: string }>(
+      `/api/v1/tracks/${trackId}/audio/url`
+    );
   },
 
   // Download mix as file
   downloadMix: async (jobId: string): Promise<Blob> => {
     return await apiClient.get<Blob>(`/api/v1/jobs/${jobId}/download`);
-  },
-}; 
+  }
+};

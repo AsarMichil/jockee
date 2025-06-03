@@ -1,9 +1,8 @@
-'use client';
+"use client";
 
-import { useEffect } from 'react';
-import { useRouter } from 'next/navigation';
-import { authApi } from '../lib/api/auth';
-import Image from "next/image";
+import { useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { authApi } from "../lib/api/auth";
 
 export default function HomePage() {
   const router = useRouter();
@@ -12,9 +11,9 @@ export default function HomePage() {
     const checkAuth = async () => {
       const status = await authApi.getStatus();
       if (status.authenticated) {
-      router.push('/dashboard');
+        router.push("/dashboard");
       } else {
-        router.push('/login');
+        router.push("/login");
       }
     };
     checkAuth();

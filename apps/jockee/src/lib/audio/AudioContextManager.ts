@@ -1,3 +1,5 @@
+"use client";
+
 export class AudioContextManager {
   private static instance: AudioContextManager;
   private context: AudioContext | null = null;
@@ -6,7 +8,9 @@ export class AudioContextManager {
   private constructor() {}
 
   static getInstance(): AudioContextManager {
+    console.log("AudioContextManager.getInstance");
     if (!AudioContextManager.instance) {
+      console.log("AudioContextManager.getInstance creating new instance");
       AudioContextManager.instance = new AudioContextManager();
     }
     return AudioContextManager.instance;
@@ -16,16 +20,16 @@ export class AudioContextManager {
     if (this.context && this.context.state !== "closed") {
       return this.context;
     }
-
-    this.context = new (window.AudioContext ||
-      (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
+    this.context = new window.AudioContext();
     this.masterGain = this.context.createGain();
     this.masterGain.connect(this.context.destination);
 
-    // Resume context if suspended (required by some browsers)
-    if (this.context.state === "suspended") {
-      await this.context.resume();
-    }
+    console.log("AudioContextManager.initialize", this.context);
+
+    // // Resume context if suspended (required by some browsers)
+    // if (this.context.state === "suspended") {
+    //   await this.context.resume();
+    // }
 
     return this.context;
   }
@@ -69,5 +73,18 @@ export class AudioContextManager {
 
   getCurrentTime(): number {
     return this.context?.currentTime || 0;
+  }
+
+  setupGainNode(): GainNode {
+    if (!this.context) {
+      throw new Error("Audio context not available");
+    }
+    if (!this.masterGain) {
+      this.masterGain = this.context?.createGain();
+      this.masterGain.connect(this.context?.destination);
+    }
+    const node = this.context.createGain();
+    node.connect(this.masterGain);
+    return node;
   }
 }

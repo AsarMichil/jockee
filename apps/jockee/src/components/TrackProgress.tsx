@@ -1,5 +1,4 @@
 import { MixInstructions } from '../lib/types';
-import { formatDuration } from '../lib/utils';
 
 interface TrackProgressProps {
   mixInstructions: MixInstructions;

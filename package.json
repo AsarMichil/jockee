@@ -12,5 +12,8 @@
   "packageManager": "bun@1.2.0",
   "workspaces": [
     "apps/*"
-  ]
+  ],
+  "dependencies": {
+    "immer": "^10.1.1"
+  }
 }

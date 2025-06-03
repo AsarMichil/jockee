@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect } from "react";
 
 interface UseKeyboardShortcutsProps {
   onPlayPause: () => void;
@@ -18,37 +18,39 @@ export const useKeyboardShortcuts = ({
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       // Don't trigger shortcuts if user is typing in an input
-      if (event.target instanceof HTMLInputElement || 
-          event.target instanceof HTMLTextAreaElement ||
-          isLoading) {
+      if (
+        event.target instanceof HTMLInputElement ||
+        event.target instanceof HTMLTextAreaElement ||
+        isLoading
+      ) {
         return;
       }
 
       switch (event.code) {
-        case 'Space':
+        case "Space":
           event.preventDefault();
           onPlayPause();
           break;
-        
-        case 'ArrowLeft':
+
+        case "ArrowLeft":
           event.preventDefault();
           // Seek backward 10 seconds
           onSeek(Math.max(0, currentTime - 10));
           break;
-        
-        case 'ArrowRight':
+
+        case "ArrowRight":
           event.preventDefault();
           // Seek forward 10 seconds
           onSeek(Math.min(duration, currentTime + 10));
           break;
-        
-        case 'ArrowUp':
+
+        case "ArrowUp":
           event.preventDefault();
           // Seek forward 30 seconds
           onSeek(Math.min(duration, currentTime + 30));
           break;
-        
-        case 'ArrowDown':
+
+        case "ArrowDown":
           event.preventDefault();
           // Seek backward 30 seconds
           onSeek(Math.max(0, currentTime - 30));
@@ -56,10 +58,10 @@ export const useKeyboardShortcuts = ({
       }
     };
 
-    document.addEventListener('keydown', handleKeyDown);
+    document.addEventListener("keydown", handleKeyDown);
 
     return () => {
-      document.removeEventListener('keydown', handleKeyDown);
+      document.removeEventListener("keydown", handleKeyDown);
     };
   }, [onPlayPause, onSeek, currentTime, duration, isLoading]);
-}; 
+};

@@ -1,5 +1,8 @@
 {
-  "/favicon.ico/route": "app/favicon.ico/route.js",
+  "/(player)/dashboard/page": "app/(player)/dashboard/page.js",
+  "/(player)/mix/[jobId]/page": "app/(player)/mix/[jobId]/page.js",
   "/_not-found/page": "app/_not-found/page.js",
+  "/favicon.ico/route": "app/favicon.ico/route.js",
+  "/login/page": "app/login/page.js",
   "/page": "app/page.js"
 }

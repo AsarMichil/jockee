@@ -70,6 +70,7 @@ class JobResultResponse(BaseModel):
     analyzed_tracks: int
     downloaded_tracks: int
     failed_tracks: int
+    tracks: Optional[List[TrackSummary]] = None  # All tracks used in the job
     mix_instructions: Optional[MixInstructions] = None
     error_message: Optional[str] = None
     created_at: datetime

@@ -213,7 +213,7 @@ export default function AnalysisPage() {
               <div className="space-y-3 text-sm text-gray-600">
                 <div className="flex items-start space-x-2">
                   <div className="w-2 h-2 bg-blue-500 rounded-full mt-2"></div>
-                  <p>Our AI analyzes each track's BPM, key, and energy level to create perfect transitions</p>
+                  <p>Our AI analyzes each track&apos;s BPM, key, and energy level to create perfect transitions</p>
                 </div>
                 <div className="flex items-start space-x-2">
                   <div className="w-2 h-2 bg-blue-500 rounded-full mt-2"></div>

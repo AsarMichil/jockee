@@ -51,6 +51,7 @@ export interface AnalysisJob {
   analyzed_tracks: number;
   downloaded_tracks: number;
   failed_tracks: number;
+  tracks?: Track[];
   mix_instructions?: MixInstructions;
   error_message?: string;
   created_at: string;
