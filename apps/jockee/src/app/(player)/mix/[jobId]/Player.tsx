@@ -27,6 +27,7 @@ import {
 } from "lucide-react";
 import { PlaybackSlider } from "./PlaybackSlider";
 import BPMSlider from "./BPMSlider";
+import WaveformVisualizer from "./AudioVisualizer";
 
 export default function Player({ data }: { data: Promise<AnalysisJob> }) {
   const job = use(data);
@@ -211,6 +212,7 @@ export default function Player({ data }: { data: Promise<AnalysisJob> }) {
           {/* Audio Visualizer */}
           <div className="bg-black rounded-lg p-4">
             <AudioVisualizer isPlaying={isPlaying} className="mx-auto" />
+            <WaveformVisualizer deck={deck === "A" ? "deckA" : "deckB"} />
           </div>
 
           <PlaybackSlider track={track} deckName={deck} />
