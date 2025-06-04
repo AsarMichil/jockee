@@ -1,8 +1,10 @@
 class ApiClient {
-  private baseURL: string;
+  readonly baseURL: string;
 
   constructor() {
-    this.baseURL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+    // Temporarily hardcode for debugging
+    this.baseURL = "http://localhost:8000";
+    // this.baseURL = import.meta.env.VITE_API_URL || "http://localhost:8000";
   }
 
   private async request<T>(

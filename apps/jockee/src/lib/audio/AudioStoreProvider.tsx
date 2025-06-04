@@ -1,11 +1,9 @@
-"use client";
-
 import { createContext, ReactNode, useContext, useRef } from "react";
-import { createAudioPlayerStore, initializeAudioStore } from "./Audio";
+import { store } from "./Audio";
 import { useStore } from "zustand";
 import { type AudioPlayerStore } from "./Audio";
 
-export type AudioStoreApi = ReturnType<typeof createAudioPlayerStore>;
+export type AudioStoreApi = typeof store;
 
 export interface AudioStoreProviderProps {
   children: ReactNode;
@@ -18,8 +16,7 @@ export const AudioStoreContext = createContext<AudioStoreApi | undefined>(
 export const AudioStoreProvider = ({ children }: AudioStoreProviderProps) => {
   const storeRef = useRef<AudioStoreApi | null>(null);
   if (storeRef.current === null) {
-    console.log("Initializing audio store NO REF");
-    storeRef.current = createAudioPlayerStore(initializeAudioStore());
+    storeRef.current = store;
   }
 
   return (

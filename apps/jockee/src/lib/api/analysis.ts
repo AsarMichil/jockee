@@ -2,6 +2,7 @@ import { apiClient } from "./client";
 import { AnalysisJob, MixInstructions } from "../types";
 
 export const analysisApi = {
+  baseURL: apiClient.baseURL,
   // Get job status
   getJobStatus: async (jobId: string): Promise<AnalysisJob> => {
     return await apiClient.get<AnalysisJob>(`/api/v1/jobs/${jobId}/status`);
@@ -29,6 +30,7 @@ export const analysisApi = {
 
   // Get audio file URL for a track
   getTrackAudioUrl: async (trackId: string): Promise<{ url: string }> => {
+    console.log("getTrackAudioUrl", trackId);
     return await apiClient.get<{ url: string }>(
       `/api/v1/tracks/${trackId}/audio/url`
     );
