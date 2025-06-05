@@ -1,17 +1,29 @@
 import { Slider } from "@/components/ui/slider";
-import { useAudioStore } from "@/lib/audio/AudioStoreProvider";
+import { deckAAtom, deckBAtom, setDeckBpmAtom } from "@/lib/audio/Audio";
+import { useAtomValue, useSetAtom } from "jotai";
 import { RotateCcw } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 export default function BPMSlider({ deckName }: { deckName: string }) {
   const derivedDeckName = deckName === "A" ? "deckA" : "deckB";
-  const deck = useAudioStore((state) => state[derivedDeckName]);
-  const setDeckBpm = useAudioStore((state) => state.setDeckBpm);
-  const [bpm, setBpmInner] = useState([deck?.track?.bpm || 0]);
+
+  // Use individual deck hooks instead of selector
+  const deckA = useAtomValue(deckAAtom);
+  const deckB = useAtomValue(deckBAtom);
+  const deck = deckName === "A" ? deckA : deckB;
+  const setDeckBpm = useSetAtom(setDeckBpmAtom);
+  const deckBpm = deck?.track?.bpm ?? 0;
+  console.log("BPM SLIDER", deckA, deckB, deck, deckName, deckBpm);
+
+  const [bpm, setBpmInner] = useState([deckBpm]);
+  // Sync local state with atom value when it changes
+  useEffect(() => {
+    setBpmInner([deckBpm]);
+  }, [deckBpm]);
 
   const setBpm = (value: number[]) => {
     const toNearestDecimal = Math.round(value[0] * 10) / 10;
-    setDeckBpm(derivedDeckName, toNearestDecimal);
+    setDeckBpm({ deck: derivedDeckName, bpm: toNearestDecimal });
     setBpmInner([toNearestDecimal]);
   };
 
@@ -22,7 +34,7 @@ export default function BPMSlider({ deckName }: { deckName: string }) {
         <span className="flex items-center gap-2">
           {bpm[0]}
           {/* Reset to original bpm */}
-          <button onClick={() => setBpm([deck?.track?.bpm || 0])}>
+          <button onClick={() => setBpm([deckBpm ?? 0])}>
             <RotateCcw className="w-4 h-4" />
           </button>
         </span>

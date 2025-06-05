@@ -40,7 +40,7 @@ class Settings(BaseSettings):
     MAX_AUDIO_CACHE_GB: int = 50
 
     # yt-dlp settings
-    YTDL_RATE_LIMIT: str = "50K"
+    YTDL_RATE_LIMIT: str = "2.0M"
     YTDL_MAX_DOWNLOADS_PER_MINUTE: int = 10
 
     # CORS

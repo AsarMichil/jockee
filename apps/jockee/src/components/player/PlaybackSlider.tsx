@@ -1,8 +1,13 @@
 import { useState, useEffect } from "react";
 import { Slider } from "@/components/ui/slider";
-import { useAudioStore } from "@/lib/audio/AudioStoreProvider";
+import {
+  useDeckAAudioElement,
+  useDeckBAudioElement
+} from "@/lib/audio/AudioStoreProvider";
 import { Track } from "@/lib/types";
 
+import { scrubDeckAtom } from "@/lib/audio/Audio";
+import { useSetAtom } from "jotai";
 const formatTime = (seconds: number) => {
   const mins = Math.floor(seconds / 60);
   const secs = Math.floor(seconds % 60);
@@ -16,15 +21,17 @@ export const PlaybackSlider = ({
   track: Track | null;
   deckName: "A" | "B";
 }) => {
-  const scrubDeck = useAudioStore((state) => state.scrubDeck);
+  const scrubDeck = useSetAtom(scrubDeckAtom);
   const derivedDeckName = deckName === "A" ? "deckA" : "deckB";
-  const audioElement = useAudioStore((state) =>
-    deckName === "A" ? state.deckAAudioElement : state.deckBAudioElement
-  );
+  // Use individual audio element hooks
+  const [deckAAudioElement] = useDeckAAudioElement();
+  const [deckBAudioElement] = useDeckBAudioElement();
+  const audioElement = deckName === "A" ? deckAAudioElement : deckBAudioElement;
+
   const [position, setPosition] = useState([0]);
 
   const setDeckPosition = (value: number[]) => {
-    scrubDeck(derivedDeckName, value[0]);
+    scrubDeck({ deck: derivedDeckName, position: value[0] });
   };
 
   // Animation loop for continuous slider updates

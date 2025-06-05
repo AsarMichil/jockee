@@ -1,4 +1,4 @@
-import { createStore } from "zustand/vanilla";
+import { atom } from "jotai";
 import { AudioContextManager } from "./AudioContextManager";
 import { analysisApi } from "../api/analysis";
 import WaveSurfer from "wavesurfer.js";
@@ -39,6 +39,7 @@ export interface DeckState {
   cuePoint: number;
   isAnimating: boolean;
   audioUrl?: string;
+  isPlaying?: boolean;
 }
 
 /**
@@ -56,311 +57,449 @@ export interface QueueState {
   playHistory: Track[];
 }
 
-interface AudioPlayerStoreState {
-  masterVolume: number;
-  audioContextManager: AudioContextManager | null;
-  audioContext: AudioContext | null; // probably dont use this
-  tracks: Track[];
+// === JOTAI ATOMS ===
 
-  // Deck States
-  deckA: DeckState | null;
-  deckB: DeckState | null;
+// Basic state atoms
+export const masterVolumeAtom = atom<number>(1.0);
+export const audioContextManagerAtom = atom<AudioContextManager | null>(null);
+export const audioContextAtom = atom<AudioContext | null>(null);
+export const tracksAtom = atom<Track[]>([]);
+export const autoplayAtom = atom<boolean>(true);
 
-  // Audio Elements (separated from deck state) - always defined
-  deckAAudioElement: HTMLAudioElement;
-  deckBAudioElement: HTMLAudioElement;
+// 0.5 = center, 0 = deckA, 1 = deckB
+export const crossfaderAtom = atom<number>(0.5);
+export const deckAVolumeAtom = atom<number>(1.0);
+export const deckBVolumeAtom = atom<number>(1.0);
 
-  deckAWavesurfer: WaveSurfer | null;
-  deckBWavesurfer: WaveSurfer | null;
+// Deck state atoms
+export const deckAAtom = atom<DeckState | null>(null);
+export const deckBAtom = atom<DeckState | null>(null);
 
-  autoplay: boolean;
+// Audio elements atoms (these will be initialized once)
+export const deckAAudioElementAtom = atom<HTMLAudioElement>(new Audio());
+export const deckBAudioElementAtom = atom<HTMLAudioElement>(new Audio());
 
-  /** Queue management state */
-  queue: QueueState;
-}
+// Wavesurfer atoms
+export const deckAWavesurferAtom = atom<WaveSurfer | null>(null);
+export const deckBWavesurferAtom = atom<WaveSurfer | null>(null);
 
-export type AudioPlayerStoreActions = {
-  setDeckA: (deckA: DeckState) => void; // probably avoid using these directly
-  setDeckB: (deckB: DeckState) => void; // probably avoid using these directly
+// Queue state atom
+export const queueAtom = atom<QueueState>({
+  queue: [],
+  currentIndex: 0,
+  playbackMode: "sequential",
+  playHistory: []
+});
 
-  // Load track onto deck
-  loadTrack: (track: Track, deck: "deckA" | "deckB") => Promise<void>;
-  playDeck: (deck: "deckA" | "deckB", trackId: string, offset?: number) => void;
-  scrubDeck: (deck: "deckA" | "deckB", position: number) => void;
-  pauseDeck: (deck: "deckA" | "deckB") => void;
-  setDeckVolume: (deck: "deckA" | "deckB", volume: number) => void;
-  setDeckBpm: (deck: "deckA" | "deckB", bpm: number) => void;
+// === DERIVED ATOMS ===
 
-  setMasterVolume: (volume: number) => void;
+// Master volume setter with side effect
+export const setMasterVolumeAtom = atom(null, (get, set, volume: number) => {
+  set(masterVolumeAtom, volume);
+  // Also update the actual audio context master volume
+  const audioContextManager = get(audioContextManagerAtom);
+  if (audioContextManager) {
+    audioContextManager.setMasterVolume(volume);
+  }
+});
 
-  // Queue actions
-  setQueuedTracks: (tracks: Track[]) => void;
-  advanceQueue: () => void;
-  autoplayNextTrack: (deck: "deckA" | "deckB") => Promise<void>;
-};
+// Queue actions
+export const setQueuedTracksAtom = atom(null, (get, set, tracks: Track[]) => {
+  const currentQueue = get(queueAtom);
+  set(queueAtom, { ...currentQueue, queue: tracks });
+});
 
-export type AudioPlayerStore = AudioPlayerStoreState & AudioPlayerStoreActions;
+export const advanceQueueAtom = atom(null, (get, set) => {
+  const currentQueue = get(queueAtom);
+  set(queueAtom, {
+    ...currentQueue,
+    currentIndex: Math.min(
+      currentQueue.currentIndex + 1,
+      currentQueue.queue.length - 1
+    )
+  });
+});
 
-// === DEFAULT INITIAL STATES ===
-const createAudioStore = () => {
-  console.log("This happened");
-  return createStore<AudioPlayerStore>()((set, get) => ({
-    tracks: [],
-    masterVolume: 0.8,
-    audioContextManager: null,
-    audioContext: null,
-    deckA: null,
-    deckB: null,
-    deckAAudioElement: new Audio(),
-    deckBAudioElement: new Audio(),
-    deckAWavesurfer: null,
-    deckBWavesurfer: null,
-    autoplay: true,
-    queue: {
-      queue: [],
-      currentIndex: 0,
-      playbackMode: "sequential",
-      playHistory: []
-    },
-    setDeckA: (deckA: DeckState) => set({ deckA }),
-    setDeckB: (deckB: DeckState) => set({ deckB }),
+// Load track action
+export const loadTrackAtom = atom(
+  null,
+  async (
+    get,
+    set,
+    { track, deck }: { track: Track; deck: "deckA" | "deckB" }
+  ) => {
+    try {
+      const deckStateAtom = deck === "deckA" ? deckAAtom : deckBAtom;
+      const audioElementAtom =
+        deck === "deckA" ? deckAAudioElementAtom : deckBAudioElementAtom;
 
-    setMasterVolume: (volume: number) => {
-      set({ masterVolume: volume });
-      // Also update the actual audio context master volume
-      const { audioContextManager } = get();
-      if (audioContextManager) {
-        audioContextManager.setMasterVolume(volume);
-      }
-    },
+      const deckState = get(deckStateAtom);
+      const audioElement = get(audioElementAtom);
 
-    // Queue actions
-    setQueuedTracks: (tracks: Track[]) =>
-      set((state) => ({ queue: { ...state.queue, queue: tracks } })),
-    advanceQueue: () =>
-      set((state) => ({
-        queue: {
-          ...state.queue,
-          currentIndex: Math.min(
-            state.queue.currentIndex + 1,
-            state.queue.queue.length - 1
-          )
-        }
-      })),
+      console.log("loadTrack", track, deck, audioElement);
 
-    // === ENHANCED DECK MANAGEMENT ===
-    loadTrack: async (track: Track, deck: "deckA" | "deckB") => {
-      try {
-        const deckState = get()[deck];
-        const audioElementKey =
-          deck === "deckA" ? "deckAAudioElement" : "deckBAudioElement";
-        const audioElement = get()[audioElementKey];
-        console.log("loadTrack", track, deck, audioElement);
-
-        if (deckState?.isLoading) {
-          console.log(`Track "${track.title}" is already loading`);
-          return;
-        }
-        if (deckState?.track?.id === track.id) {
-          console.log(`Track "${track.title}" is already loaded onto ${deck}`);
-          return;
-        }
-
-        // Clean up old audio element
-        audioElement.pause();
-        audioElement.src = "";
-
-        // Set loading state
-        set(() => ({
-          [deck]: {
-            ...deckState,
-            isLoading: true,
-            isLoaded: false
-          }
-        }));
-
-        const newDeckState = await loadTrack(track, audioElement);
-        set(() => ({
-          [deck]: newDeckState
-        }));
-        console.log(`Track "${track.title}" loaded onto ${deck}`);
-      } catch (error) {
-        console.error(`Failed to load track onto ${deck}:`, error);
-        // Set error state on deck
-        set((state) => ({
-          ...state,
-          [deck]: {
-            ...state[deck],
-            track,
-            isLoaded: false,
-            isLoading: false
-          }
-        }));
-        throw error;
-      }
-    },
-
-    scrubDeck: (deck: "deckA" | "deckB", position: number) => {
-      const audioElementKey =
-        deck === "deckA" ? "deckAAudioElement" : "deckBAudioElement";
-      const audioElement = get()[audioElementKey];
-      console.log("scrubDeck", deck, position);
-
-      // Set the audio element's current time directly
-      audioElement.currentTime = position;
-    },
-
-    autoplayNextTrack: async (deck: "deckA" | "deckB") => {
-      console.log("autoplayNextTrack", deck);
-      const deckState = get()[deck];
-      const audioElementKey =
-        deck === "deckA" ? "deckAAudioElement" : "deckBAudioElement";
-      const audioElement = get()[audioElementKey];
-      const queue = get().queue;
-      console.log("queue is currently", queue);
-      if (!deckState) {
-        console.log(`Deck ${deck} not found`);
+      if (deckState?.isLoading) {
+        console.log(`Track "${track.title}" is already loading`);
         return;
       }
-      const queuePositionBefore = queue.currentIndex;
-      get().advanceQueue();
-      const queuePositionAfter = get().queue.currentIndex;
-      if (queuePositionAfter === queuePositionBefore) {
-        console.log("queue is empty clearing deck:", deck);
-        // Clean up audio element
-        audioElement.pause();
-        audioElement.src = "";
-        audioElement.load();
+      if (deckState?.track?.id === track.id) {
+        console.log(`Track "${track.title}" is already loaded onto ${deck}`);
+        return;
+      }
 
-        const newDeckState = {
-          ...deckState,
+      // Clean up old audio element
+      audioElement.pause();
+      audioElement.src = "";
+
+      // Set loading state
+      const loadingState: DeckState = {
+        track: deckState?.track || null,
+        isLoading: true,
+        isLoaded: false,
+        cuePoint: deckState?.cuePoint || 0,
+        isAnimating: deckState?.isAnimating || false,
+        audioUrl: deckState?.audioUrl,
+        isPlaying: deckState?.isPlaying || false
+      };
+      set(deckStateAtom, loadingState);
+
+      const newDeckState = await loadTrack(track, audioElement);
+      set(deckStateAtom, newDeckState);
+      console.log(`Track "${track.title}" loaded onto ${deck}`);
+    } catch (error) {
+      console.error(`Failed to load track onto ${deck}:`, error);
+      // Set error state on deck
+      const deckStateAtom = deck === "deckA" ? deckAAtom : deckBAtom;
+      const deckState = get(deckStateAtom);
+      const errorState: DeckState = {
+        track,
+        isLoaded: false,
+        isLoading: false,
+        cuePoint: deckState?.cuePoint || 0,
+        isAnimating: deckState?.isAnimating || false,
+        audioUrl: deckState?.audioUrl,
+        isPlaying: false
+      };
+      set(deckStateAtom, errorState);
+      throw error;
+    }
+  }
+);
+
+// Scrub deck action
+export const scrubDeckAtom = atom(
+  null,
+  (
+    get,
+    set,
+    { deck, position }: { deck: "deckA" | "deckB"; position: number }
+  ) => {
+    const audioElementAtom =
+      deck === "deckA" ? deckAAudioElementAtom : deckBAudioElementAtom;
+    const audioElement = get(audioElementAtom);
+    console.log("scrubDeck", deck, position);
+
+    // Set the audio element's current time directly
+    audioElement.currentTime = position;
+  }
+);
+
+// Autoplay next track action
+export const autoplayNextTrackAtom = atom(
+  null,
+  async (get, set, deck: "deckA" | "deckB") => {
+    console.log("autoplayNextTrack", deck);
+
+    const deckStateAtom = deck === "deckA" ? deckAAtom : deckBAtom;
+    const audioElementAtom =
+      deck === "deckA" ? deckAAudioElementAtom : deckBAudioElementAtom;
+
+    const deckState = get(deckStateAtom);
+    const audioElement = get(audioElementAtom);
+    const queue = get(queueAtom);
+
+    console.log("queue is currently", queue);
+
+    if (!deckState) {
+      console.log(`Deck ${deck} not found`);
+      return;
+    }
+
+    const queuePositionBefore = queue.currentIndex;
+    set(advanceQueueAtom);
+    const queuePositionAfter = get(queueAtom).currentIndex;
+
+    if (queuePositionAfter === queuePositionBefore) {
+      console.log("queue is empty clearing deck:", deck);
+      // Clean up audio element
+      audioElement.pause();
+      audioElement.src = "";
+      audioElement.load();
+
+      const newDeckState = {
+        ...deckState,
+        isLoading: false,
+        isLoaded: false,
+        track: null
+      };
+      set(deckStateAtom, newDeckState);
+      set(autoplayAtom, false);
+      return;
+    }
+
+    const nextTrack = get(queueAtom).queue[queuePositionAfter];
+    await set(loadTrackAtom, { track: nextTrack, deck });
+    set(playDeckAtom, { deck, trackId: nextTrack.id });
+    console.log("autoplayed next track", deck);
+  }
+);
+
+// Play deck action
+export const playDeckAtom = atom(
+  null,
+  (
+    get,
+    set,
+    {
+      deck,
+      offset
+    }: { deck: "deckA" | "deckB"; trackId?: string; offset?: number }
+  ) => {
+    const deckStateAtom = deck === "deckA" ? deckAAtom : deckBAtom;
+    const audioElementAtom =
+      deck === "deckA" ? deckAAudioElementAtom : deckBAudioElementAtom;
+
+    const deckState = get(deckStateAtom);
+    const audioElement = get(audioElementAtom);
+
+    if (!deckState?.isLoaded) {
+      console.log(`Deck ${deck} is not loaded`);
+      return;
+    }
+
+    // Set offset if provided
+    if (offset !== undefined) {
+      audioElement.currentTime = offset;
+    }
+
+    // Add ended event listener for autoplay functionality
+    const handleEnded = () => {
+      console.log(`Track ended on ${deck}`);
+      if (get(autoplayAtom)) {
+        set(autoplayNextTrackAtom, deck);
+      } else {
+        // Clear the track and reset the deck state
+        const newDeckState: DeckState = {
+          track: null,
           isLoading: false,
           isLoaded: false,
-          track: null
+          cuePoint: 0,
+          isAnimating: false,
+          isPlaying: false
         };
-        set(() => ({
-          [deck]: newDeckState,
-          autoplay: false
-        }));
-        return;
+        set(deckStateAtom, newDeckState);
       }
-      await get().loadTrack(queue.queue[queuePositionAfter], deck);
-      get().playDeck(deck, queue.queue[queuePositionAfter].id);
-      console.log("autoplayed next track", deck);
-    },
+    };
 
-    playDeck: (
-      deck: "deckA" | "deckB",
-      _trackId: string,
-      offset: number | undefined
-    ) => {
-      const deckState = get()[deck];
-      const audioElementKey =
-        deck === "deckA" ? "deckAAudioElement" : "deckBAudioElement";
-      const audioElement = get()[audioElementKey];
-
-      if (!deckState?.isLoaded) {
-        console.log(`Deck ${deck} is not loaded`);
-        return;
+    const handlePlaying = () => {
+      console.log(`Track started on ${deck}`);
+      const currentDeckState = get(deckStateAtom);
+      if (currentDeckState) {
+        set(deckStateAtom, { ...currentDeckState, isPlaying: true });
       }
+    };
 
-      // Set offset if provided
-      if (offset !== undefined) {
-        audioElement.currentTime = offset;
+    const handlePaused = () => {
+      console.log(`Track paused on ${deck}`);
+      const currentDeckState = get(deckStateAtom);
+      if (currentDeckState) {
+        set(deckStateAtom, { ...currentDeckState, isPlaying: false });
       }
+    };
 
-      // Add ended event listener for autoplay functionality
-      const handleEnded = () => {
-        console.log(`Track ended on ${deck}`);
-        if (get().autoplay) {
-          get().autoplayNextTrack(deck);
-        } else {
-          // Clear the track and reset the deck state
-          const newDeckState = {
-            ...deckState,
-            isLoading: false,
-            isLoaded: false,
-            track: null
-          };
-          set(() => ({
-            [deck]: newDeckState
-          }));
-        }
-      };
+    // Remove any existing ended listener and add new one
+    audioElement.removeEventListener("ended", handleEnded);
+    audioElement.addEventListener("ended", handleEnded);
+    audioElement.removeEventListener("playing", handlePlaying);
+    audioElement.removeEventListener("pause", handlePaused);
+    audioElement.addEventListener("playing", handlePlaying);
+    audioElement.addEventListener("pause", handlePaused);
 
-      const handlePlaying = () => {
-        console.log(`Track started on ${deck}`);
-        set((state) => ({ [deck]: { ...state[deck], isPlaying: true } }));
-      };
-      const handlePaused = () => {
-        console.log(`Track paused on ${deck}`);
-        set((state) => ({ [deck]: { ...state[deck], isPlaying: false } }));
-      };
+    // Play the audio element
+    audioElement.play().catch((error) => {
+      console.error(`Failed to play deck ${deck}:`, error);
+    });
+  }
+);
 
-      // Remove any existing ended listener and add new one
-      audioElement.removeEventListener("ended", handleEnded);
-      audioElement.addEventListener("ended", handleEnded);
-      audioElement.removeEventListener("playing", handlePlaying);
-      audioElement.removeEventListener("pause", handlePaused);
-      audioElement.addEventListener("playing", handlePlaying);
-      audioElement.addEventListener("pause", handlePaused);
+// Pause deck action
+export const pauseDeckAtom = atom(null, (get, set, deck: "deckA" | "deckB") => {
+  const audioElementAtom =
+    deck === "deckA" ? deckAAudioElementAtom : deckBAudioElementAtom;
+  const audioElement = get(audioElementAtom);
+  // Pause the audio element
+  audioElement.pause();
+  console.log(`paused deck ${deck} at: ${audioElement.currentTime}`);
+});
 
-      // Play the audio element
-      audioElement.play().catch((error) => {
-        console.error(`Failed to play deck ${deck}:`, error);
-      });
-    },
-
-    pauseDeck: (deck: "deckA" | "deckB") => {
-      const audioElementKey =
-        deck === "deckA" ? "deckAAudioElement" : "deckBAudioElement";
-      const audioElement = get()[audioElementKey];
-      // Pause the audio element
-      audioElement.pause();
-      console.log(`paused deck ${deck} at: ${audioElement.currentTime}`);
-    },
-
-    setDeckVolume: (deck: "deckA" | "deckB", volume: number) => {
-      const audioElementKey =
-        deck === "deckA" ? "deckAAudioElement" : "deckBAudioElement";
-      const audioElement = get()[audioElementKey];
-
-      // Set volume directly on audio element
-      audioElement.volume = volume;
-    },
-
-    setDeckBpm: (deck: "deckA" | "deckB", bpm: number) => {
-      const audioElementKey =
-        deck === "deckA" ? "deckAAudioElement" : "deckBAudioElement";
-      const audioElement = get()[audioElementKey];
-      const deckState = get()[deck];
-
-      const trackBpm = deckState?.track?.bpm;
-      if (!trackBpm) {
-        throw new Error(`Track ${deckState?.track?.title} has no BPM`);
-      }
-      if (bpm < 0) {
-        throw new Error(`BPM cannot be less than 0, not in spec`);
-      }
-      const playbackRate = bpm / trackBpm; // 1.0 is normal speed
-      audioElement.playbackRate = playbackRate;
+export const playPauseDeckAtom = atom(
+  null,
+  (get, set, deck: "deckA" | "deckB") => {
+    const audioElementAtom =
+      deck === "deckA" ? deckAAudioElementAtom : deckBAudioElementAtom;
+    const audioElement = get(audioElementAtom);
+    if (audioElement.paused) {
+      set(playDeckAtom, { deck });
+    } else {
+      set(pauseDeckAtom, deck);
     }
-  }));
-};
+  }
+);
 
-export const store = createAudioStore();
-export const setDeckWavesurfer = (
-  deck: "deckA" | "deckB",
-  wavesurfer: WaveSurfer
-) => {
-  console.log("Setting wavesurfer for deck", deck);
-  const state = store.getState();
-  if (deck === "deckA") {
-    store.setState({ ...state, deckAWavesurfer: wavesurfer });
+export const setCrossfaderAtom = atom(null, (get, set, crossfader: number) => {
+  set(crossfaderAtom, crossfader);
+  const deckAVolume = get(deckAVolumeAtom);
+  const deckBVolume = get(deckBVolumeAtom);
+  const deckAElement = get(deckAAudioElementAtom);
+  const deckBElement = get(deckBAudioElementAtom);
+  deckAElement.volume = computePlaybackVolume("deckA", deckAVolume, crossfader);
+  deckBElement.volume = computePlaybackVolume("deckB", deckBVolume, crossfader);
+});
+
+// Set deck volume action
+export const setDeckVolumeAtom = atom(
+  null,
+  (get, set, { deck, volume }: { deck: "deckA" | "deckB"; volume: number }) => {
+    console.log("Setting deck volume", deck, volume);
+    if (deck === "deckA") {
+      set(deckAVolumeAtom, volume);
+      const crossfader = get(crossfaderAtom);
+      const playbackVolume = computePlaybackVolume(deck, volume, crossfader);
+      const deckElement = get(deckAAudioElementAtom);
+      deckElement.volume = playbackVolume;
+    } else {
+      set(deckBVolumeAtom, volume);
+      const crossfader = get(crossfaderAtom);
+      const playbackVolume = computePlaybackVolume(deck, volume, crossfader);
+      const deckElement = get(deckBAudioElementAtom);
+      deckElement.volume = playbackVolume;
+    }
+  }
+);
+
+/**
+ * Computes the crossfader curve multiplier for a given position
+ * Uses an S-curve that ensures both channels are at full volume when crossfader = 0.5
+ * @param crossfader - The crossfader position (0 to 1)
+ * @param forDeckA - Whether this is for deck A (true) or deck B (false)
+ * @returns The volume multiplier (0 to 1)
+ */
+const computeCrossfaderCurve = (
+  crossfader: number,
+  forDeckA: boolean
+): number => {
+  // Clamp crossfader to valid range
+  const pos = Math.max(0, Math.min(1, crossfader));
+
+  if (forDeckA) {
+    // For deck A: full volume from 0 to 0.5, then fade out
+    if (pos <= 0.5) {
+      return 1.0; // Full volume from left to center
+    } else {
+      // Smooth curve from 1.0 to 0.0 as we go from center (0.5) to right (1.0)
+      const fadePosition = (pos - 0.5) * 2; // Normalize to 0-1 range
+      // Use cosine curve for smooth fade
+      return Math.cos((fadePosition * Math.PI) / 2);
+    }
   } else {
-    store.setState({ ...state, deckBWavesurfer: wavesurfer });
+    // For deck B: fade in until 0.5, then full volume
+    if (pos >= 0.5) {
+      return 1.0; // Full volume from center to right
+    } else {
+      // Smooth curve from 0.0 to 1.0 as we go from left (0.0) to center (0.5)
+      const fadePosition = pos * 2; // Normalize to 0-1 range
+      // Use sine curve for smooth fade in
+      return Math.sin((fadePosition * Math.PI) / 2);
+    }
   }
 };
+
+/**
+ * Computes the playback volume for a given deck and crossfader
+ * 0.5 = center (both decks at full volume), 0 = deckA only, 1 = deckB only
+ * @param deck - The deck to compute the volume for
+ * @param deckVolume - The individual deck volume (0 to 1)
+ * @param crossfader - The crossfader position (0 to 1)
+ * @returns The final playback volume for the given deck and crossfader
+ */
+const computePlaybackVolume = (
+  deck: "deckA" | "deckB",
+  deckVolume: number,
+  crossfader: number
+): number => {
+  const crossfaderMultiplier = computeCrossfaderCurve(
+    crossfader,
+    deck === "deckA"
+  );
+  return deckVolume * crossfaderMultiplier;
+};
+// Set deck BPM action
+export const setDeckBpmAtom = atom(
+  null,
+  (get, set, { deck, bpm }: { deck: "deckA" | "deckB"; bpm: number }) => {
+    const audioElementAtom =
+      deck === "deckA" ? deckAAudioElementAtom : deckBAudioElementAtom;
+    const deckStateAtom = deck === "deckA" ? deckAAtom : deckBAtom;
+
+    const audioElement = get(audioElementAtom);
+    const deckState = get(deckStateAtom);
+
+    const trackBpm = deckState?.track?.bpm;
+    if (!trackBpm) {
+      throw new Error(`Track ${deckState?.track?.title} has no BPM`);
+    }
+    if (bpm < 0) {
+      throw new Error(`BPM cannot be less than 0, not in spec`);
+    }
+    const playbackRate = bpm / trackBpm; // 1.0 is normal speed
+    audioElement.playbackRate = playbackRate;
+  }
+);
+
+// Wavesurfer setter atoms
+export const setDeckAWavesurferAtom = atom(
+  null,
+  (get, set, wavesurfer: WaveSurfer) => {
+    console.log("Setting wavesurfer for deckA");
+    set(deckAWavesurferAtom, wavesurfer);
+  }
+);
+
+export const setDeckBWavesurferAtom = atom(
+  null,
+  (get, set, wavesurfer: WaveSurfer) => {
+    console.log("Setting wavesurfer for deckB");
+    set(deckBWavesurferAtom, wavesurfer);
+  }
+);
+
+// Helper function for setting wavesurfer (maintains compatibility)
+export const setDeckWavesurfer = (
+  deck: "deckA" | "deckB",
+  wavesurfer: WaveSurfer,
+  setAtom: (
+    atomSetter: typeof setDeckAWavesurferAtom | typeof setDeckBWavesurferAtom,
+    value: WaveSurfer
+  ) => void
+) => {
+  console.log("Setting wavesurfer for deck", deck);
+  if (deck === "deckA") {
+    setAtom(setDeckAWavesurferAtom, wavesurfer);
+  } else {
+    setAtom(setDeckBWavesurferAtom, wavesurfer);
+  }
+};
+
 /**
  * Audio loading error types for better error handling
  */
