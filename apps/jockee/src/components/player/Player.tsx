@@ -27,6 +27,7 @@ import BPMSlider from "./BPMSlider";
 import WaveformVisualizer from "./AudioVisualizer";
 import VolumeSlider from "./VolumeSlider";
 import Crossfader from "./Crossfader";
+import EqualizerControl from "./EqualizerControl";
 import {
   deckAAtom,
   deckBAtom,
@@ -242,6 +243,17 @@ export default function Player({ data }: { data: Promise<AnalysisJob> }) {
             <CardContent className="space-y-6">
               {/* Crossfader */}
               <Crossfader />
+
+              {/* EQ Controls */}
+              <div className="space-y-4">
+                <div className="text-center">
+                  <h3 className="text-sm font-semibold text-gray-700 mb-4">Equalizer</h3>
+                </div>
+                <div className="grid grid-cols-1 gap-4">
+                  <EqualizerControl deck="deckA" title="Deck A EQ" />
+                  <EqualizerControl deck="deckB" title="Deck B EQ" />
+                </div>
+              </div>
 
               {/* Master Volume
               <VolumeSlider

@@ -25,7 +25,12 @@ import {
   setDeckVolumeAtom,
   setDeckBpmAtom,
   setDeckAWavesurferAtom,
-  setDeckBWavesurferAtom
+  setDeckBWavesurferAtom,
+  deckAEQAtom,
+  deckBEQAtom,
+  setEQBandAtom,
+  resetEQAtom,
+  initializeEQFiltersAtom
 } from "./Audio";
 
 export interface AudioStoreProviderProps {
@@ -54,6 +59,8 @@ export const useAudioState = () => {
   const [deckAWavesurfer] = useAtom(deckAWavesurferAtom);
   const [deckBWavesurfer] = useAtom(deckBWavesurferAtom);
   const [queue] = useAtom(queueAtom);
+  const [deckAEQ] = useAtom(deckAEQAtom);
+  const [deckBEQ] = useAtom(deckBEQAtom);
 
   return {
     masterVolume,
@@ -67,7 +74,9 @@ export const useAudioState = () => {
     deckBAudioElement,
     deckAWavesurfer,
     deckBWavesurfer,
-    queue
+    queue,
+    deckAEQ,
+    deckBEQ
   };
 };
 
@@ -84,6 +93,9 @@ export const useAudioActions = () => {
   const setDeckBpm = useSetAtom(setDeckBpmAtom);
   const setDeckAWavesurfer = useSetAtom(setDeckAWavesurferAtom);
   const setDeckBWavesurfer = useSetAtom(setDeckBWavesurferAtom);
+  const setEQBand = useSetAtom(setEQBandAtom);
+  const resetEQ = useSetAtom(resetEQAtom);
+  const initializeEQFilters = useSetAtom(initializeEQFiltersAtom);
 
   return {
     setMasterVolume,
@@ -97,7 +109,10 @@ export const useAudioActions = () => {
     setDeckVolume,
     setDeckBpm,
     setDeckAWavesurfer,
-    setDeckBWavesurfer
+    setDeckBWavesurfer,
+    setEQBand,
+    resetEQ,
+    initializeEQFilters
   };
 };
 
