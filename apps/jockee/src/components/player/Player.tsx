@@ -19,7 +19,8 @@ import {
   Music,
   Clock,
   Zap,
-  Headphones
+  Headphones,
+  ArrowLeft
 } from "lucide-react";
 import { PlaybackSlider } from "./PlaybackSlider";
 import BPMSlider from "./BPMSlider";
@@ -36,6 +37,8 @@ import { useAtomValue, useSetAtom } from "jotai";
 import { APlayButton } from "./BigAssPlayButton";
 import { BPlayButton } from "./BigAssPlayButton";
 import { AutoplayButton } from "./AutoplayButton";
+import { useNavigate } from "react-router-dom";
+import { BeatSyncButtons } from "./BeatSyncButtons";
 
 const formatTime = (seconds: number) => {
   const mins = Math.floor(seconds / 60);
@@ -49,7 +52,7 @@ const formatBPM = (bpm: number) => {
 
 export default function Player({ data }: { data: Promise<AnalysisJob> }) {
   const job = use(data);
-
+  const navigate = useNavigate();
   // Use Jotai hooks instead of Zustand selectors
   const { setQueuedTracks, loadTrack, advanceQueue } = useAudioActions();
 
@@ -168,6 +171,15 @@ export default function Player({ data }: { data: Promise<AnalysisJob> }) {
 
       {/* Header */}
       <div className="bg-black/50 backdrop-blur-sm border-b border-gray-700 p-4">
+        <div className="max-w-7xl mx-auto ">
+          <button
+            onClick={() => navigate("/dashboard")}
+            className="flex items-center text-white hover:text-gray-300"
+          >
+            <ArrowLeft className="h-4 w-4 mr-1" />
+            Back to Dashboard
+          </button>
+        </div>
         <div className="max-w-7xl mx-auto flex items-center justify-between">
           <div>
             <h1 className="text-2xl font-bold">{job.playlist_name}</h1>
@@ -239,17 +251,7 @@ export default function Player({ data }: { data: Promise<AnalysisJob> }) {
               /> */}
               <AutoplayButton />
               {/* Sync Controls */}
-              <div className="space-y-2">
-                <h3 className="text-sm font-medium text-gray-700">Sync</h3>
-                <div className="grid grid-cols-2 gap-2">
-                  <Button variant="outline" size="sm" className="w-full">
-                    Beat Sync A→B
-                  </Button>
-                  <Button variant="outline" size="sm" className="w-full">
-                    Beat Sync B→A
-                  </Button>
-                </div>
-              </div>
+              <BeatSyncButtons />
 
               {/* Mix Progress */}
               {job.mix_instructions && (

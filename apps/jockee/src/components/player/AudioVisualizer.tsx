@@ -34,7 +34,8 @@ export default function WaveformVisualizer({
         regionsPlugin.addRegion({
           start: beatTimestamps[i],
           drag: false,
-          color: "white"
+          color: "#c6d2ff"
+          
         });
       }
     }
@@ -78,7 +79,7 @@ export default function WaveformVisualizer({
       onFinish={handleEnded}
       onReady={onReady}
       height={100}
-      waveColor="violet"
+      waveColor="#372aac"
       media={audioElement}
       dragToSeek={true}
       plugins={plugins}
