@@ -45,6 +45,28 @@ class TrackUpdate(BaseModel):
     beat_regularity: Optional[float] = None
     average_beat_interval: Optional[float] = None
     
+    # Enhanced analysis fields
+    # Style analysis
+    dominant_style: Optional[str] = None
+    style_scores: Optional[dict] = None
+    style_confidence: Optional[float] = None
+    
+    # Mix points analysis
+    mix_in_point: Optional[float] = None
+    mix_out_point: Optional[float] = None
+    mixable_sections: Optional[List[dict]] = None
+    
+    # Section analysis
+    intro_end: Optional[float] = None
+    outro_start: Optional[float] = None
+    intro_energy: Optional[float] = None
+    outro_energy: Optional[float] = None
+    energy_profile: Optional[List[dict]] = None
+    
+    # Vocal analysis
+    vocal_sections: Optional[List[dict]] = None
+    instrumental_sections: Optional[List[dict]] = None
+    
     analysis_version: Optional[str] = None
     analyzed_at: Optional[datetime] = None
     analysis_error: Optional[str] = None
@@ -101,6 +123,28 @@ class Track(TrackBase):
     beat_regularity: Optional[float] = None
     average_beat_interval: Optional[float] = None
 
+    # Enhanced analysis fields
+    # Style analysis
+    dominant_style: Optional[str] = None
+    style_scores: Optional[dict] = None
+    style_confidence: Optional[float] = None
+    
+    # Mix points analysis
+    mix_in_point: Optional[float] = None
+    mix_out_point: Optional[float] = None
+    mixable_sections: Optional[List[dict]] = None
+    
+    # Section analysis
+    intro_end: Optional[float] = None
+    outro_start: Optional[float] = None
+    intro_energy: Optional[float] = None
+    outro_energy: Optional[float] = None
+    energy_profile: Optional[List[dict]] = None
+    
+    # Vocal analysis
+    vocal_sections: Optional[List[dict]] = None
+    instrumental_sections: Optional[List[dict]] = None
+
     # Analysis metadata
     analysis_version: Optional[str] = None
     analyzed_at: Optional[datetime] = None
@@ -132,6 +176,28 @@ class TrackSummary(BaseModel):
     beat_confidence_scores: Optional[List[float]] = None
     beat_regularity: Optional[float] = None
     average_beat_interval: Optional[float] = None
+
+    # Enhanced analysis fields
+    # Style analysis
+    dominant_style: Optional[str] = None
+    style_scores: Optional[dict] = None
+    style_confidence: Optional[float] = None
+    
+    # Mix points analysis
+    mix_in_point: Optional[float] = None
+    mix_out_point: Optional[float] = None
+    mixable_sections: Optional[List[dict]] = None
+    
+    # Section analysis
+    intro_end: Optional[float] = None
+    outro_start: Optional[float] = None
+    intro_energy: Optional[float] = None
+    outro_energy: Optional[float] = None
+    energy_profile: Optional[List[dict]] = None
+    
+    # Vocal analysis
+    vocal_sections: Optional[List[dict]] = None
+    instrumental_sections: Optional[List[dict]] = None
 
     class Config:
         from_attributes = True

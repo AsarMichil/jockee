@@ -1,7 +1,7 @@
 import librosa
 import numpy as np
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, List, Tuple
 from pathlib import Path
 import asyncio
 from datetime import datetime
@@ -73,6 +73,9 @@ class AudioAnalyzer:
             if len(y) == 0:
                 raise ValueError("Audio file appears to be empty")
 
+            # Get duration for other analyses
+            duration = librosa.get_duration(y=y, sr=sr)
+
             # Analyze different aspects
             bpm_data = self._analyze_tempo(y, sr)
             key_data = self._analyze_key(y, sr)
@@ -84,6 +87,11 @@ class AudioAnalyzer:
             liveness_data = self._analyze_liveness(y, sr)
             speech_data = self._analyze_speechiness(y, sr)
             loudness_data = self._analyze_loudness(y, sr)
+            
+            # Enhanced analysis features
+            style_data = self._analyze_track_style_internal(y, sr)
+            mix_points_data = self._analyze_mix_points_internal(y, sr, duration, bpm_data)
+            section_data = self._analyze_sections_internal(y, sr, duration)
 
             return {
                 **bpm_data,
@@ -96,6 +104,9 @@ class AudioAnalyzer:
                 **liveness_data,
                 **speech_data,
                 **loudness_data,
+                **style_data,
+                **mix_points_data,
+                **section_data,
             }
 
         except Exception as e:
@@ -544,6 +555,8 @@ class AudioAnalyzer:
             "bpm_compatibility": 0.0,
             "key_compatibility": 0.0,
             "energy_compatibility": 0.0,
+            "style_compatibility": 0.0,
+            "vocal_compatibility": 0.0,
             "overall_score": 0.0,
         }
 
@@ -561,16 +574,50 @@ class AudioAnalyzer:
                 )
                 compatibility["key_compatibility"] = key_score
 
-            # Energy compatibility
-            if track_a.get("energy") and track_b.get("energy"):
-                energy_diff = abs(track_a["energy"] - track_b["energy"])
+            # Energy compatibility - enhanced to consider intro/outro energy
+            energy_a = track_a.get("energy", 0.5)
+            energy_b = track_b.get("energy", 0.5)
+            
+            # If we have intro/outro energy data, use that for better transition matching
+            outro_energy_a = track_a.get("outro_energy", energy_a)
+            intro_energy_b = track_b.get("intro_energy", energy_b)
+            
+            energy_diff = abs(outro_energy_a - intro_energy_b)
                 compatibility["energy_compatibility"] = max(0.0, 1.0 - energy_diff)
 
-            # Overall score (weighted average)
+            # Style compatibility - check if both tracks have style data
+            style_a = track_a.get("dominant_style")
+            style_b = track_b.get("dominant_style")
+            if style_a and style_b:
+                if style_a == style_b:
+                    compatibility["style_compatibility"] = 1.0
+                elif self._are_compatible_styles(style_a, style_b):
+                    compatibility["style_compatibility"] = 0.7
+                else:
+                    compatibility["style_compatibility"] = 0.3
+            else:
+                compatibility["style_compatibility"] = 0.5  # Neutral if no style data
+
+            # Vocal compatibility - avoid vocal clashing
+            vocal_a = track_a.get("vocal_centric", track_a.get("speechiness", 0.0))
+            vocal_b = track_b.get("vocal_centric", track_b.get("speechiness", 0.0))
+            
+            # Strong vocals in both tracks can clash
+            vocal_clash = vocal_a > 0.7 and vocal_b > 0.7
+            if vocal_clash:
+                compatibility["vocal_compatibility"] = 0.3
+            else:
+                # Smooth vocal transition
+                vocal_diff = abs(vocal_a - vocal_b)
+                compatibility["vocal_compatibility"] = max(0.3, 1.0 - vocal_diff)
+
+            # Overall score with updated weights
             scores = [
-                compatibility["bpm_compatibility"] * 0.4,  # BPM is most important
-                compatibility["key_compatibility"] * 0.3,  # Key is important
-                compatibility["energy_compatibility"] * 0.3,  # Energy matters too
+                compatibility["bpm_compatibility"] * 0.25,    # BPM important but not everything
+                compatibility["key_compatibility"] * 0.20,   # Key harmony
+                compatibility["energy_compatibility"] * 0.30, # Energy flow most important  
+                compatibility["style_compatibility"] * 0.15,  # Style consistency
+                compatibility["vocal_compatibility"] * 0.10,  # Vocal considerations
             ]
             compatibility["overall_score"] = sum(scores)
 
@@ -633,29 +680,56 @@ class AudioAnalyzer:
         else:
             return 0.2  # Less compatible
 
-    def find_mix_points(self, file_path: str, duration: float) -> Dict[str, float]:
-        """Find optimal mix in/out points for a track."""
+    def find_mix_points(self, file_path: str, duration: float, analysis_data: Dict[str, Any] = None) -> Dict[str, float]:
+        """Find optimal mix in/out points for a track using beat and energy analysis."""
         try:
-            # For Phase 1, use simple time-based approach
-            # In future phases, this could use beat detection and energy analysis
+            # If we don't have analysis data, load and analyze the file
+            if analysis_data is None:
+                y, sr = librosa.load(file_path, sr=self.sample_rate)
+                if len(y) == 0:
+                    raise ValueError("Audio file appears to be empty")
+                
+                # Get beat and energy data
+                tempo_data = self._analyze_tempo(y, sr)
+                energy_data = self._analyze_energy(y, sr)
+                beat_timestamps = tempo_data.get("beat_timestamps", [])
+                
+                # Calculate RMS energy over time for section analysis
+                rms = librosa.feature.rms(y=y, hop_length=512)[0]
+                rms_times = librosa.frames_to_time(range(len(rms)), sr=sr, hop_length=512)
+            else:
+                # Use provided analysis data
+                beat_timestamps = analysis_data.get("beat_timestamps", [])
+                # For existing analysis, we'll need to reload audio for energy profile
+                if beat_timestamps:
+                    y, sr = librosa.load(file_path, sr=self.sample_rate)
+                    rms = librosa.feature.rms(y=y, hop_length=512)[0]
+                    rms_times = librosa.frames_to_time(range(len(rms)), sr=sr, hop_length=512)
+                else:
+                    rms = None
+                    rms_times = None
 
-            # Typical intro/outro lengths in seconds
-            intro_length = min(32.0, duration * 0.15)  # 15% of track or 32 seconds
-            outro_length = min(32.0, duration * 0.15)
-
-            # Mix points
-            mix_in_point = intro_length
-            mix_out_point = duration - outro_length
+            # Find optimal mix in point (intro analysis)
+            mix_in_point = self._find_optimal_mix_in_point(beat_timestamps, rms, rms_times, duration)
+            
+            # Find optimal mix out point (outro analysis)  
+            mix_out_point = self._find_optimal_mix_out_point(beat_timestamps, rms, rms_times, duration)
 
             # Ensure we have at least some playable content
             if mix_out_point <= mix_in_point:
                 mix_in_point = duration * 0.1
                 mix_out_point = duration * 0.9
 
+            # Find additional mix-friendly sections
+            mixable_sections = self._find_mixable_sections(beat_timestamps, rms, rms_times, duration)
+
             return {
                 "mix_in_point": round(mix_in_point, 2),
                 "mix_out_point": round(mix_out_point, 2),
                 "playable_duration": round(mix_out_point - mix_in_point, 2),
+                "mixable_sections": mixable_sections,
+                "intro_energy": self._calculate_section_energy(rms, rms_times, 0, min(30, duration * 0.2)) if rms is not None else None,
+                "outro_energy": self._calculate_section_energy(rms, rms_times, max(0, duration - 30), duration) if rms is not None else None,
             }
 
         except Exception as e:
@@ -664,4 +738,729 @@ class AudioAnalyzer:
                 "mix_in_point": 0.0,
                 "mix_out_point": duration,
                 "playable_duration": duration,
+                "mixable_sections": [],
+                "intro_energy": None,
+                "outro_energy": None,
             }
+
+    def _find_optimal_mix_in_point(self, beat_timestamps: List[float], rms: np.ndarray, rms_times: np.ndarray, duration: float) -> float:
+        """Find optimal mix in point using beat alignment and energy analysis."""
+        try:
+            # Default fallback
+            default_mix_in = min(16.0, duration * 0.15)
+            
+            if not beat_timestamps or rms is None:
+                return default_mix_in
+                
+            # Look for energy buildup in intro (first 45 seconds)
+            intro_end = min(45.0, duration * 0.3)
+            intro_mask = rms_times <= intro_end
+            intro_rms = rms[intro_mask]
+            intro_times = rms_times[intro_mask]
+            
+            if len(intro_rms) < 2:
+                return default_mix_in
+                
+            # Find where energy stabilizes or peaks
+            # Look for the point where energy becomes consistent (good for mixing)
+            window_size = min(20, len(intro_rms) // 4)  # 4 windows in intro
+            energy_stability_scores = []
+            
+            for i in range(window_size, len(intro_rms) - window_size):
+                window = intro_rms[i-window_size:i+window_size]
+                stability = 1.0 - (np.std(window) / (np.mean(window) + 1e-8))
+                energy_level = np.mean(window)
+                # Prefer points with good energy and stability
+                score = stability * 0.6 + energy_level * 0.4
+                energy_stability_scores.append((intro_times[i], score))
+            
+            if not energy_stability_scores:
+                return default_mix_in
+                
+            # Find the best energy-stable point
+            best_time, _ = max(energy_stability_scores, key=lambda x: x[1])
+            
+            # Align to nearest beat if we have beat data
+            if beat_timestamps:
+                # Find beat closest to our energy-based point
+                beat_diffs = [abs(beat - best_time) for beat in beat_timestamps if beat <= intro_end]
+                if beat_diffs:
+                    min_diff_idx = np.argmin(beat_diffs)
+                    aligned_beats = [beat for beat in beat_timestamps if beat <= intro_end]
+                    if min_diff_idx < len(aligned_beats):
+                        best_time = aligned_beats[min_diff_idx]
+            
+            # Ensure reasonable bounds
+            mix_in_point = max(8.0, min(best_time, intro_end))
+            return mix_in_point
+            
+        except Exception as e:
+            logger.warning(f"Error finding optimal mix in point: {e}")
+            return min(16.0, duration * 0.15)
+
+    def _find_optimal_mix_out_point(self, beat_timestamps: List[float], rms: np.ndarray, rms_times: np.ndarray, duration: float) -> float:
+        """Find optimal mix out point using beat alignment and energy analysis."""
+        try:
+            # Default fallback  
+            default_mix_out = max(duration - 16.0, duration * 0.85)
+            
+            if not beat_timestamps or rms is None:
+                return default_mix_out
+                
+            # Look for energy fade or natural ending in outro (last 45 seconds)
+            outro_start = max(0, duration - 45.0)
+            outro_mask = rms_times >= outro_start
+            outro_rms = rms[outro_mask]
+            outro_times = rms_times[outro_mask]
+            
+            if len(outro_rms) < 2:
+                return default_mix_out
+                
+            # Look for energy fade or stable low-energy section good for mixing out
+            # Find where energy drops significantly or becomes stable at lower level
+            window_size = min(20, len(outro_rms) // 4)
+            fade_scores = []
+            
+            for i in range(window_size, len(outro_rms) - window_size):
+                before_window = outro_rms[max(0, i-window_size*2):i]
+                after_window = outro_rms[i:i+window_size]
+                
+                if len(before_window) > 0 and len(after_window) > 0:
+                    # Score based on energy drop and stability in after window
+                    energy_drop = np.mean(before_window) - np.mean(after_window)
+                    after_stability = 1.0 - (np.std(after_window) / (np.mean(after_window) + 1e-8))
+                    # Prefer points with significant energy drop and stable after section
+                    score = max(0, energy_drop) * 0.7 + after_stability * 0.3
+                    fade_scores.append((outro_times[i], score))
+            
+            if not fade_scores:
+                return default_mix_out
+                
+            # Find the best fade point
+            best_time, _ = max(fade_scores, key=lambda x: x[1])
+            
+            # Align to nearest beat if we have beat data
+            if beat_timestamps:
+                # Find beat closest to our energy-based point
+                relevant_beats = [beat for beat in beat_timestamps if beat >= outro_start and beat <= duration - 4.0]
+                if relevant_beats:
+                    beat_diffs = [abs(beat - best_time) for beat in relevant_beats]
+                    min_diff_idx = np.argmin(beat_diffs)
+                    best_time = relevant_beats[min_diff_idx]
+            
+            # Ensure reasonable bounds (leave at least 4 seconds at end)
+            mix_out_point = min(best_time, duration - 4.0)
+            mix_out_point = max(mix_out_point, duration * 0.7)  # Don't go too early
+            return mix_out_point
+            
+        except Exception as e:
+            logger.warning(f"Error finding optimal mix out point: {e}")
+            return max(duration - 16.0, duration * 0.85)
+
+    def _find_mixable_sections(self, beat_timestamps: List[float], rms: np.ndarray, rms_times: np.ndarray, duration: float) -> List[Dict[str, Any]]:
+        """Find additional sections suitable for mixing (breaks, buildups, etc.)."""
+        sections = []
+        
+        if rms is None or len(rms) < 10:
+            return sections
+            
+        try:
+            # Find low-energy sections that could be good for mixing
+            # These might be breakdowns, instrumental sections, etc.
+            window_size = min(50, len(rms) // 10)  # ~2-3 second windows
+            
+            for i in range(0, len(rms) - window_size, window_size // 2):  # 50% overlap
+                window = rms[i:i+window_size]
+                window_times = rms_times[i:i+window_size]
+                
+                start_time = float(window_times[0])
+                end_time = float(window_times[-1])
+                
+                # Skip if too close to intro/outro (already handled)
+                if start_time < 20 or end_time > duration - 20:
+                    continue
+                    
+                avg_energy = float(np.mean(window))
+                energy_stability = float(1.0 - (np.std(window) / (np.mean(window) + 1e-8)))
+                
+                # Look for sections with low-medium energy and high stability
+                if avg_energy < 0.3 and energy_stability > 0.7:  # Quiet, stable sections
+                    # Check if there are beats in this section for better mixing
+                    section_beats = [b for b in beat_timestamps if start_time <= b <= end_time]
+                    has_beats = len(section_beats) > 0
+                    
+                    sections.append({
+                        "type": "breakdown" if has_beats else "ambient",
+                        "start": round(start_time, 2),
+                        "end": round(end_time, 2),
+                        "duration": round(end_time - start_time, 2),
+                        "energy": round(avg_energy, 3),
+                        "stability": round(energy_stability, 3),
+                        "has_beats": has_beats,
+                        "beat_count": len(section_beats)
+                    })
+            
+            # Sort by suitability score (stability * (1-energy) for quiet stable sections)
+            sections.sort(key=lambda s: s["stability"] * (1 - s["energy"]), reverse=True)
+            
+            # Return top 3 mixable sections
+            return sections[:3]
+            
+        except Exception as e:
+            logger.warning(f"Error finding mixable sections: {e}")
+            return []
+
+    def _calculate_section_energy(self, rms: np.ndarray, rms_times: np.ndarray, start_time: float, end_time: float) -> float:
+        """Calculate average energy for a specific time section."""
+        if rms is None or rms_times is None:
+            return 0.0
+            
+        try:
+            mask = (rms_times >= start_time) & (rms_times <= end_time)
+            section_rms = rms[mask]
+            return float(np.mean(section_rms)) if len(section_rms) > 0 else 0.0
+        except Exception:
+            return 0.0
+
+    def analyze_track_style(self, file_path: str) -> Dict[str, Any]:
+        """Analyze track style in a genre-agnostic way for better mixing compatibility."""
+        try:
+            y, sr = librosa.load(file_path, sr=self.sample_rate)
+            
+            # Analyze different style characteristics
+            beat_driven_score = self._analyze_beat_driven(y, sr)
+            melodic_focus_score = self._analyze_melodic_focus(y, sr)
+            ambient_texture_score = self._analyze_ambient_texture(y, sr)
+            vocal_centric_score = self._analyze_vocal_centric(y, sr)
+            acoustic_score = self._analyze_acoustic_vs_electronic(y, sr)
+            
+            style_scores = {
+                "beat_driven": beat_driven_score,
+                "melodic_focus": melodic_focus_score,
+                "ambient_texture": ambient_texture_score,
+                "vocal_centric": vocal_centric_score,
+                "acoustic": acoustic_score,
+                "electronic": 1.0 - acoustic_score
+            }
+            
+            # Determine dominant style
+            dominant_style = max(style_scores.items(), key=lambda x: x[1])[0]
+            
+            return {
+                "dominant_style": dominant_style,
+                "style_scores": style_scores,
+                "style_confidence": style_scores[dominant_style]
+            }
+            
+        except Exception as e:
+            logger.warning(f"Style analysis failed: {e}")
+            return {
+                "dominant_style": "unknown",
+                "style_scores": {},
+                "style_confidence": 0.0
+            }
+
+    def _analyze_beat_driven(self, y: np.ndarray, sr: int) -> float:
+        """Analyze how beat-driven a track is."""
+        try:
+            # Strong, regular beats indicate beat-driven music
+            tempo, beats = librosa.beat.beat_track(y=y, sr=sr)
+            onset_envelope = librosa.onset.onset_strength(y=y, sr=sr)
+            
+            if len(beats) < 2:
+                return 0.0
+                
+            # Beat regularity
+            beat_intervals = np.diff(beats)
+            regularity = 1.0 - (np.std(beat_intervals) / np.mean(beat_intervals)) if np.mean(beat_intervals) > 0 else 0.0
+            regularity = max(0.0, min(1.0, regularity))
+            
+            # Beat strength
+            beat_strength = np.mean(onset_envelope) if len(onset_envelope) > 0 else 0.0
+            beat_strength = min(beat_strength * 2, 1.0)  # Normalize
+            
+            # Combine factors
+            beat_driven = regularity * 0.6 + beat_strength * 0.4
+            return float(beat_driven)
+            
+        except Exception:
+            return 0.0
+
+    def _analyze_melodic_focus(self, y: np.ndarray, sr: int) -> float:
+        """Analyze melodic content strength."""
+        try:
+            # Pitch tracking and harmonic content
+            chroma = librosa.feature.chroma_stft(y=y, sr=sr)
+            
+            # Melodic content indicators
+            chroma_var = np.var(chroma, axis=1)  # Pitch variation over time
+            harmonic_strength = np.mean(chroma_var)
+            
+            # Spectral centroid variation (melodic movement)
+            centroid = librosa.feature.spectral_centroid(y=y, sr=sr)[0]
+            centroid_var = np.var(centroid)
+            melody_movement = min(centroid_var / 100000, 1.0)  # Normalize
+            
+            melodic_focus = harmonic_strength * 0.6 + melody_movement * 0.4
+            return float(min(melodic_focus, 1.0))
+            
+        except Exception:
+            return 0.0
+
+    def _analyze_ambient_texture(self, y: np.ndarray, sr: int) -> float:
+        """Analyze ambient/atmospheric texture."""
+        try:
+            # Low beat strength, high spectral complexity, reverb-like characteristics
+            onset_envelope = librosa.onset.onset_strength(y=y, sr=sr)
+            beat_strength = np.mean(onset_envelope)
+            
+            # Spectral characteristics of ambient music
+            spectral_centroid = librosa.feature.spectral_centroid(y=y, sr=sr)[0]
+            spectral_bandwidth = librosa.feature.spectral_bandwidth(y=y, sr=sr)[0]
+            
+            # Low beat strength, spread spectrum = ambient
+            low_beat_score = 1.0 - min(beat_strength * 3, 1.0)
+            spectral_spread = np.mean(spectral_bandwidth) / 1000  # Normalize
+            spectral_spread = min(spectral_spread, 1.0)
+            
+            ambient_score = low_beat_score * 0.6 + spectral_spread * 0.4
+            return float(ambient_score)
+            
+        except Exception:
+            return 0.0
+
+    def _analyze_vocal_centric(self, y: np.ndarray, sr: int) -> float:
+        """Analyze how vocal-centric a track is."""
+        try:
+            # Vocal frequency range and characteristics
+            stft = librosa.stft(y)
+            freqs = librosa.fft_frequencies(sr=sr)
+            
+            # Vocal range (roughly 80-1100 Hz)
+            vocal_range_mask = (freqs >= 80) & (freqs <= 1100)
+            vocal_energy = np.mean(np.abs(stft[vocal_range_mask, :]))
+            total_energy = np.mean(np.abs(stft))
+            vocal_ratio = vocal_energy / total_energy if total_energy > 0 else 0.0
+            
+            # MFCC characteristics (vocals have distinctive patterns)
+            mfccs = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=13)
+            # Vocal-like MFCC variance patterns
+            mfcc_vocal_score = np.mean(np.var(mfccs[1:4], axis=1)) / 10  # Normalize
+            mfcc_vocal_score = min(mfcc_vocal_score, 1.0)
+            
+            vocal_centric = vocal_ratio * 0.7 + mfcc_vocal_score * 0.3
+            return float(min(vocal_centric, 1.0))
+            
+        except Exception:
+            return 0.0
+
+    def _analyze_acoustic_vs_electronic(self, y: np.ndarray, sr: int) -> float:
+        """Analyze acoustic vs electronic characteristics (returns acoustic score)."""
+        try:
+            # Spectral characteristics
+            spectral_centroid = librosa.feature.spectral_centroid(y=y, sr=sr)[0]
+            spectral_bandwidth = librosa.feature.spectral_bandwidth(y=y, sr=sr)[0]
+            zcr = librosa.feature.zero_crossing_rate(y)[0]
+            
+            # Acoustic instruments typically have:
+            # - Lower spectral centroid 
+            # - Lower bandwidth
+            # - Lower zero crossing rate
+            centroid_score = 1.0 - min(np.mean(spectral_centroid) / 4000, 1.0)
+            bandwidth_score = 1.0 - min(np.mean(spectral_bandwidth) / 2000, 1.0)
+            zcr_score = 1.0 - min(np.mean(zcr) * 10, 1.0)
+            
+            acoustic_score = (centroid_score * 0.4 + bandwidth_score * 0.3 + zcr_score * 0.3)
+            return float(min(max(acoustic_score, 0.0), 1.0))
+            
+        except Exception:
+            return 0.5  # Neutral if analysis fails
+
+    def _are_compatible_styles(self, style_a: str, style_b: str) -> bool:
+        """Check if two musical styles are compatible for mixing."""
+        # Define style compatibility matrix
+        compatible_pairs = {
+            ("beat_driven", "electronic"),
+            ("beat_driven", "melodic_focus"),
+            ("melodic_focus", "acoustic"),
+            ("ambient_texture", "melodic_focus"),
+            ("acoustic", "melodic_focus"),
+            ("electronic", "beat_driven"),
+        }
+        
+        # Check both directions
+        return (style_a, style_b) in compatible_pairs or (style_b, style_a) in compatible_pairs
+
+    def calculate_enhanced_compatibility(
+        self, track_a_path: str, track_b_path: str, track_a_data: Dict[str, Any] = None, track_b_data: Dict[str, Any] = None
+    ) -> Dict[str, Any]:
+        """Calculate enhanced compatibility with full style analysis."""
+        try:
+            # Get style analysis for both tracks if not provided
+            if not track_a_data or "dominant_style" not in track_a_data:
+                style_a = self.analyze_track_style(track_a_path)
+                track_a_data = {**(track_a_data or {}), **style_a}
+                
+            if not track_b_data or "dominant_style" not in track_b_data:
+                style_b = self.analyze_track_style(track_b_path)
+                track_b_data = {**(track_b_data or {}), **style_b}
+
+            # Calculate base compatibility
+            compatibility = self.calculate_compatibility(track_a_data, track_b_data)
+            
+            # Add enhanced metrics
+            compatibility.update({
+                "style_similarity": self._calculate_style_similarity(track_a_data, track_b_data),
+                "genre_agnostic_match": self._calculate_genre_agnostic_match(track_a_data, track_b_data),
+                "transition_difficulty": self._assess_transition_difficulty(track_a_data, track_b_data),
+                "recommended_technique": self._recommend_transition_technique(compatibility),
+            })
+            
+            return compatibility
+            
+        except Exception as e:
+            logger.error(f"Error calculating enhanced compatibility: {e}")
+            return {"error": str(e)}
+
+    def _calculate_style_similarity(self, track_a: Dict[str, Any], track_b: Dict[str, Any]) -> float:
+        """Calculate detailed style similarity score."""
+        try:
+            scores_a = track_a.get("style_scores", {})
+            scores_b = track_b.get("style_scores", {})
+            
+            if not scores_a or not scores_b:
+                return 0.5
+                
+            # Calculate cosine similarity between style vectors
+            common_styles = set(scores_a.keys()) & set(scores_b.keys())
+            if not common_styles:
+                return 0.0
+                
+            dot_product = sum(scores_a[style] * scores_b[style] for style in common_styles)
+            magnitude_a = sum(scores_a[style] ** 2 for style in common_styles) ** 0.5
+            magnitude_b = sum(scores_b[style] ** 2 for style in common_styles) ** 0.5
+            
+            if magnitude_a * magnitude_b == 0:
+                return 0.0
+                
+            similarity = dot_product / (magnitude_a * magnitude_b)
+            return float(max(0.0, min(1.0, similarity)))
+            
+        except Exception:
+            return 0.5
+
+    def _calculate_genre_agnostic_match(self, track_a: Dict[str, Any], track_b: Dict[str, Any]) -> float:
+        """Calculate how well tracks match regardless of specific genre."""
+        try:
+            # Focus on mixing-relevant characteristics
+            factors = []
+            
+            # Rhythmic compatibility
+            if track_a.get("beat_regularity") and track_b.get("beat_regularity"):
+                rhythm_match = 1.0 - abs(track_a["beat_regularity"] - track_b["beat_regularity"])
+                factors.append(("rhythm", rhythm_match, 0.3))
+            
+            # Dynamic range compatibility  
+            if track_a.get("energy") and track_b.get("energy"):
+                energy_match = 1.0 - abs(track_a["energy"] - track_b["energy"])
+                factors.append(("energy", energy_match, 0.25))
+                
+            # Instrumental vs vocal balance
+            if track_a.get("instrumentalness") and track_b.get("instrumentalness"):
+                instrumental_match = 1.0 - abs(track_a["instrumentalness"] - track_b["instrumentalness"])
+                factors.append(("instrumental", instrumental_match, 0.2))
+                
+            # Acoustic vs electronic balance
+            acoustic_a = track_a.get("acousticness", 0.5)
+            acoustic_b = track_b.get("acousticness", 0.5)
+            acoustic_match = 1.0 - abs(acoustic_a - acoustic_b)
+            factors.append(("acoustic", acoustic_match, 0.25))
+            
+            if not factors:
+                return 0.5
+                
+            # Weighted average
+            total_weight = sum(weight for _, _, weight in factors)
+            weighted_sum = sum(score * weight for _, score, weight in factors)
+            
+            return float(weighted_sum / total_weight)
+            
+        except Exception:
+            return 0.5
+
+    def _assess_transition_difficulty(self, track_a: Dict[str, Any], track_b: Dict[str, Any]) -> str:
+        """Assess how difficult the transition between tracks will be."""
+        try:
+            compatibility = self.calculate_compatibility(track_a, track_b)
+            overall_score = compatibility["overall_score"]
+            
+            if overall_score >= 0.8:
+                return "easy"
+            elif overall_score >= 0.6:
+                return "moderate"
+            elif overall_score >= 0.4:
+                return "challenging"
+            else:
+                return "difficult"
+                
+        except Exception:
+            return "unknown"
+
+    def _recommend_transition_technique(self, compatibility: Dict[str, float]) -> str:
+        """Recommend transition technique based on compatibility scores."""
+        overall_score = compatibility.get("overall_score", 0.0)
+        bpm_compat = compatibility.get("bpm_compatibility", 0.0)
+        energy_compat = compatibility.get("energy_compatibility", 0.0)
+        
+        if overall_score >= 0.8:
+            return "smooth_blend"
+        elif bpm_compat >= 0.7 and energy_compat >= 0.6:
+            return "beatmatch_crossfade"
+        elif overall_score >= 0.5:
+            return "quick_cut"
+        else:
+            return "gap_transition"
+
+    def _analyze_track_style_internal(self, y: np.ndarray, sr: int) -> Dict[str, Any]:
+        """Internal method to analyze track style and return database fields."""
+        try:
+            # Calculate style scores
+            beat_driven = self._analyze_beat_driven(y, sr)
+            melodic_focus = self._analyze_melodic_focus(y, sr)
+            ambient_texture = self._analyze_ambient_texture(y, sr)
+            vocal_centric = self._analyze_vocal_centric(y, sr)
+            acoustic_vs_electronic = self._analyze_acoustic_vs_electronic(y, sr)
+            
+            style_scores = {
+                "beat_driven": round(beat_driven, 3),
+                "melodic_focus": round(melodic_focus, 3),
+                "ambient_texture": round(ambient_texture, 3),
+                "vocal_centric": round(vocal_centric, 3),
+                "acoustic_vs_electronic": round(acoustic_vs_electronic, 3),
+            }
+            
+            # Determine dominant style
+            max_score = max(style_scores.values())
+            dominant_style = max(style_scores, key=style_scores.get)
+            
+            # Calculate confidence as the difference between highest and second highest
+            sorted_scores = sorted(style_scores.values(), reverse=True)
+            confidence = (sorted_scores[0] - sorted_scores[1]) if len(sorted_scores) > 1 else sorted_scores[0]
+            
+            return {
+                "dominant_style": dominant_style,
+                "style_scores": style_scores,
+                "style_confidence": round(confidence, 3),
+            }
+            
+        except Exception as e:
+            logger.warning(f"Style analysis failed: {e}")
+            return {
+                "dominant_style": None,
+                "style_scores": None,
+                "style_confidence": 0.0,
+            }
+
+    def _analyze_mix_points_internal(self, y: np.ndarray, sr: int, duration: float, bpm_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Internal method to analyze mix points and return database fields."""
+        try:
+            # Get RMS energy for analysis
+            rms = librosa.feature.rms(y=y)[0]
+            rms_times = librosa.frames_to_time(np.arange(len(rms)), sr=sr)
+            
+            beat_timestamps = bpm_data.get("beat_timestamps", [])
+            
+            # Find optimal mix points
+            mix_in_point = self._find_optimal_mix_in_point(beat_timestamps, rms, rms_times, duration)
+            mix_out_point = self._find_optimal_mix_out_point(beat_timestamps, rms, rms_times, duration)
+            mixable_sections = self._find_mixable_sections(beat_timestamps, rms, rms_times, duration)
+            
+            return {
+                "mix_in_point": round(mix_in_point, 3),
+                "mix_out_point": round(mix_out_point, 3),
+                "mixable_sections": mixable_sections,
+            }
+            
+        except Exception as e:
+            logger.warning(f"Mix points analysis failed: {e}")
+            return {
+                "mix_in_point": None,
+                "mix_out_point": None,
+                "mixable_sections": None,
+            }
+
+    def _analyze_sections_internal(self, y: np.ndarray, sr: int, duration: float) -> Dict[str, Any]:
+        """Internal method to analyze track sections and return database fields."""
+        try:
+            # Get RMS energy for section analysis
+            rms = librosa.feature.rms(y=y)[0]
+            rms_times = librosa.frames_to_time(np.arange(len(rms)), sr=sr)
+            
+            # Analyze intro/outro sections
+            intro_end = self._detect_intro_end(rms, rms_times, duration)
+            outro_start = self._detect_outro_start(rms, rms_times, duration)
+            
+            # Calculate section energies
+            intro_energy = self._calculate_section_energy(rms, rms_times, 0, intro_end)
+            outro_energy = self._calculate_section_energy(rms, rms_times, outro_start, duration)
+            
+            # Create energy profile (simplified - just sample at regular intervals)
+            energy_profile = self._create_energy_profile(rms, rms_times, duration)
+            
+            # Analyze vocal vs instrumental sections
+            vocal_sections, instrumental_sections = self._analyze_vocal_sections(y, sr, duration)
+            
+            return {
+                "intro_end": round(intro_end, 3),
+                "outro_start": round(outro_start, 3),
+                "intro_energy": round(intro_energy, 3),
+                "outro_energy": round(outro_energy, 3),
+                "energy_profile": energy_profile,
+                "vocal_sections": vocal_sections,
+                "instrumental_sections": instrumental_sections,
+            }
+            
+        except Exception as e:
+            logger.warning(f"Section analysis failed: {e}")
+            return {
+                "intro_end": None,
+                "outro_start": None,
+                "intro_energy": None,
+                "outro_energy": None,
+                "energy_profile": None,
+                "vocal_sections": None,
+                "instrumental_sections": None,
+            }
+
+    def _detect_intro_end(self, rms: np.ndarray, rms_times: np.ndarray, duration: float) -> float:
+        """Detect when the intro section ends."""
+        # Look for energy stabilization after initial buildup
+        max_intro_duration = min(60.0, duration * 0.3)  # Max 60s or 30% of track
+        intro_end_idx = min(len(rms) - 1, int(max_intro_duration / (rms_times[1] - rms_times[0])))
+        
+        # Find the point where energy becomes more stable
+        window_size = max(1, len(rms) // 20)  # 5% of track
+        energy_variance = []
+        
+        for i in range(window_size, intro_end_idx):
+            window = rms[i-window_size:i+window_size]
+            variance = np.var(window)
+            energy_variance.append(variance)
+        
+        if energy_variance:
+            # Find the point where variance stabilizes (becomes relatively low)
+            stable_threshold = np.percentile(energy_variance, 25)  # Lower quartile
+            for i, var in enumerate(energy_variance):
+                if var <= stable_threshold:
+                    return rms_times[i + window_size]
+        
+        # Fallback: 10% of track duration
+        return min(max_intro_duration, duration * 0.1)
+
+    def _detect_outro_start(self, rms: np.ndarray, rms_times: np.ndarray, duration: float) -> float:
+        """Detect when the outro section starts."""
+        # Look for energy decline in the last portion of the track
+        min_outro_start = max(0.0, duration - 120.0)  # Start looking 2 minutes from end
+        outro_start_idx = max(0, int(min_outro_start / (rms_times[1] - rms_times[0])))
+        
+        # Find sustained energy decline
+        window_size = max(1, len(rms) // 20)  # 5% of track
+        
+        for i in range(len(rms) - window_size, outro_start_idx, -1):
+            if i - window_size >= 0:
+                recent_energy = np.mean(rms[i-window_size:i])
+                earlier_energy = np.mean(rms[max(0, i-2*window_size):i-window_size])
+                
+                # If energy has dropped significantly, this might be outro start
+                if recent_energy < earlier_energy * 0.8:  # 20% energy drop
+                    return rms_times[i - window_size]
+        
+        # Fallback: 90% of track duration
+        return max(min_outro_start, duration * 0.9)
+
+    def _create_energy_profile(self, rms: np.ndarray, rms_times: np.ndarray, duration: float) -> List[Dict[str, float]]:
+        """Create a simplified energy profile over time."""
+        # Sample energy at 10-second intervals
+        sample_interval = 10.0
+        profile = []
+        
+        for t in np.arange(0, duration, sample_interval):
+            # Find the closest RMS index
+            idx = np.argmin(np.abs(rms_times - t))
+            energy = float(rms[idx])
+            
+            profile.append({
+                "time": round(t, 1),
+                "energy": round(energy, 3)
+            })
+        
+        return profile
+
+    def _analyze_vocal_sections(self, y: np.ndarray, sr: int, duration: float) -> Tuple[List[Dict[str, float]], List[Dict[str, float]]]:
+        """Analyze vocal vs instrumental sections using spectral features."""
+        try:
+            # Use spectral centroid and MFCC features to detect vocal sections
+            spectral_centroid = librosa.feature.spectral_centroid(y=y, sr=sr)[0]
+            mfccs = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=13)
+            
+            # Vocal sections typically have higher spectral centroid and specific MFCC patterns
+            # This is a simplified approach
+            times = librosa.frames_to_time(np.arange(len(spectral_centroid)), sr=sr)
+            
+            # Simple threshold-based detection
+            centroid_threshold = np.percentile(spectral_centroid, 70)  # Top 30% are likely vocal
+            
+            vocal_sections = []
+            instrumental_sections = []
+            
+            in_vocal = False
+            vocal_start = 0.0
+            
+            for i, (time, centroid) in enumerate(zip(times, spectral_centroid)):
+                is_vocal = centroid > centroid_threshold
+                
+                if is_vocal and not in_vocal:
+                    # Start of vocal section
+                    vocal_start = time
+                    in_vocal = True
+                elif not is_vocal and in_vocal:
+                    # End of vocal section
+                    vocal_sections.append({
+                        "start": round(vocal_start, 2),
+                        "end": round(time, 2),
+                        "confidence": 0.6  # Simple confidence score
+                    })
+                    in_vocal = False
+            
+            # Close any open vocal section
+            if in_vocal:
+                vocal_sections.append({
+                    "start": round(vocal_start, 2),
+                    "end": round(duration, 2),
+                    "confidence": 0.6
+                })
+            
+            # Fill gaps as instrumental sections
+            last_end = 0.0
+            for vocal in vocal_sections:
+                if vocal["start"] > last_end:
+                    instrumental_sections.append({
+                        "start": round(last_end, 2),
+                        "end": round(vocal["start"], 2),
+                        "confidence": 0.6
+                    })
+                last_end = vocal["end"]
+            
+            # Add final instrumental section if needed
+            if last_end < duration:
+                instrumental_sections.append({
+                    "start": round(last_end, 2),
+                    "end": round(duration, 2),
+                    "confidence": 0.6
+                })
+            
+            return vocal_sections, instrumental_sections
+            
+        except Exception as e:
+            logger.warning(f"Vocal section analysis failed: {e}")
+            return [], []

@@ -48,8 +48,8 @@ export const playlistsApi = {
   // }
 
   // Submit playlist for analysis
-  analyzePlaylist: async (playlistUrl: string): Promise<{ job_id: string }> => {
-    return await apiClient.post<{ job_id: string }>("/api/v1/jobs/analyze", {
+  analyzePlaylist: async (playlistUrl: string): Promise<{ id: string }> => {
+    return await apiClient.post<{ id: string }>("/api/v1/jobs/analyze", {
       spotify_playlist_url: playlistUrl,
       options: {
         auto_fetch_missing: true,

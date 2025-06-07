@@ -11,6 +11,7 @@ import { deckAAtom } from "@/lib/audio/Audio";
 import { deckBAtom } from "@/lib/audio/Audio";
 import { useAtomValue } from "jotai";
 import RegionsPlugin from "wavesurfer.js/dist/plugins/regions.esm.js";
+import TimelinePlugin from "wavesurfer.js/dist/plugins/timeline.esm.js";
 
 export default function WaveformVisualizer({
   deck,
@@ -25,7 +26,23 @@ export default function WaveformVisualizer({
   const beatTimestamps = deckState?.track?.beat_timestamps;
   console.log("beatTimestamps", beatTimestamps);
   const regionsPlugin = useMemo(() => RegionsPlugin.create(), []);
-  const plugins = useMemo(() => [regionsPlugin], [regionsPlugin]);
+  const timelinePlugin = useMemo(
+    () =>
+      TimelinePlugin.create({
+        style: {
+          fontSize: "12px",
+          color: "#fff"
+        },
+        timeInterval: 0.25,
+        primaryLabelInterval: 4,
+        secondaryLabelInterval: 1
+      }),
+    []
+  );
+  const plugins = useMemo(
+    () => [regionsPlugin, timelinePlugin],
+    [regionsPlugin, timelinePlugin]
+  );
 
   useEffect(() => {
     console.log("useEffect", beatTimestamps, wavesurfer);
@@ -35,7 +52,6 @@ export default function WaveformVisualizer({
           start: beatTimestamps[i],
           drag: false,
           color: "#c6d2ff"
-          
         });
       }
     }

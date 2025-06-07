@@ -141,9 +141,12 @@ async def _analyze_playlist_async(task, job_id: str, spotify_access_token: str):
             mix_result = mix_generator.generate_mix(processed_tracks, job.id)
 
             if "error" not in mix_result:
-                # Save transitions to database
-                for transition_data in mix_result["transitions"]:
-                    db.add(transition_data)
+                # Save transitions to database - they are already MixTransition objects
+                for transition in mix_result["transitions"]:
+                    # The transition is already a MixTransition object from generate_mix
+                    if hasattr(transition, '__dict__'):  # It's a model object
+                        db.add(transition)
+                    # If it's somehow a dict, skip saving to DB (shouldn't happen with generate_mix)
 
                 # Save mix result
                 job.result = {
@@ -270,6 +273,28 @@ async def process_single_track(
             track.beat_confidence_scores = analysis_result.get("beat_confidence_scores")
             track.beat_regularity = float(analysis_result.get("beat_regularity")) if analysis_result.get("beat_regularity") is not None else None
             track.average_beat_interval = float(analysis_result.get("average_beat_interval")) if analysis_result.get("average_beat_interval") is not None else None
+            
+            # Enhanced analysis results
+            # Style analysis
+            track.dominant_style = analysis_result.get("dominant_style")
+            track.style_scores = analysis_result.get("style_scores")
+            track.style_confidence = float(analysis_result.get("style_confidence")) if analysis_result.get("style_confidence") is not None else None
+            
+            # Mix points analysis
+            track.mix_in_point = float(analysis_result.get("mix_in_point")) if analysis_result.get("mix_in_point") is not None else None
+            track.mix_out_point = float(analysis_result.get("mix_out_point")) if analysis_result.get("mix_out_point") is not None else None
+            track.mixable_sections = analysis_result.get("mixable_sections")
+            
+            # Section analysis
+            track.intro_end = float(analysis_result.get("intro_end")) if analysis_result.get("intro_end") is not None else None
+            track.outro_start = float(analysis_result.get("outro_start")) if analysis_result.get("outro_start") is not None else None
+            track.intro_energy = float(analysis_result.get("intro_energy")) if analysis_result.get("intro_energy") is not None else None
+            track.outro_energy = float(analysis_result.get("outro_energy")) if analysis_result.get("outro_energy") is not None else None
+            track.energy_profile = analysis_result.get("energy_profile")
+            
+            # Vocal analysis
+            track.vocal_sections = analysis_result.get("vocal_sections")
+            track.instrumental_sections = analysis_result.get("instrumental_sections")
             
             track.analysis_version = analysis_result["analysis_version"]
             track.analyzed_at = analysis_result["analyzed_at"]

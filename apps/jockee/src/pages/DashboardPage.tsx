@@ -45,7 +45,7 @@ export default function DashboardPage() {
 
         // Fetch recent analysis jobs
         const jobs = await analysisApi.getUserJobs();
-        setRecentJobs(jobs.slice(0, 5)); // Show last 5 jobs
+        setRecentJobs(jobs.slice(0, 15)); // Show last 5 jobs
       } catch (err) {
         console.error("Dashboard initialization error:", err);
         setError("Failed to load dashboard data");
@@ -62,7 +62,8 @@ export default function DashboardPage() {
       const response = await playlistsApi.analyzePlaylist(
         playlist.external_urls.spotify
       );
-      navigate(`/analysis/${response.job_id}`);
+      console.log("response", response);
+      navigate(`/analysis/${response.id}`);
     } catch (err) {
       console.error("Failed to start analysis:", err);
       setError("Failed to start playlist analysis");
@@ -140,7 +141,7 @@ export default function DashboardPage() {
                   No analysis jobs yet. Start by analyzing a playlist!
                 </p>
               ) : (
-                <div className="space-y-3">
+                <div className="space-y-3 max-h-96 overflow-y-auto">
                   {recentJobs.map((job) => (
                     <div
                       key={job.id}

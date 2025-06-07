@@ -50,6 +50,28 @@ class Track(Base):
     beat_regularity = Column(Float)  # Beat timing consistency (0.0 to 1.0)
     average_beat_interval = Column(Float)  # Average time between beats in seconds
 
+    # Enhanced analysis results
+    # Style analysis
+    dominant_style = Column(String)  # Dominant musical style
+    style_scores = Column(JSON)  # Scores for different musical styles
+    style_confidence = Column(Float)  # Confidence in style classification
+    
+    # Mix points analysis
+    mix_in_point = Column(Float)  # Optimal mix-in point in seconds
+    mix_out_point = Column(Float)  # Optimal mix-out point in seconds
+    mixable_sections = Column(JSON)  # Array of mixable sections with timestamps
+    
+    # Section analysis
+    intro_end = Column(Float)  # End of intro section in seconds
+    outro_start = Column(Float)  # Start of outro section in seconds
+    intro_energy = Column(Float)  # Average energy level during intro
+    outro_energy = Column(Float)  # Average energy level during outro
+    energy_profile = Column(JSON)  # Energy profile over time
+    
+    # Vocal analysis
+    vocal_sections = Column(JSON)  # Sections with vocals
+    instrumental_sections = Column(JSON)  # Instrumental sections
+
     # Analysis metadata
     analysis_version = Column(String, default="2.0.0")
     analyzed_at = Column(DateTime(timezone=True))

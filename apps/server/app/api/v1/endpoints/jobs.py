@@ -91,10 +91,10 @@ async def analyze_playlist(
             playlist_url=request_data.spotify_playlist_url,
             playlist_id=playlist_id,
             playlist_name=playlist_info["name"],
-            options=request_data.options.dict() if request_data.options else {},
+            options=request_data.options.model_dump() if request_data.options else {},
         )
 
-        job = AnalysisJob(**job_data.dict())
+        job = AnalysisJob(**job_data.model_dump())
         db.add(job)
         db.commit()
         db.refresh(job)
@@ -270,6 +270,20 @@ async def get_job_results(job_id: str, db: Session = Depends(get_db)):
                     beat_confidence_scores=transition.track_a.beat_confidence_scores,
                     beat_regularity=transition.track_a.beat_regularity,
                     average_beat_interval=transition.track_a.average_beat_interval,
+                    # Enhanced analysis fields
+                    dominant_style=transition.track_a.dominant_style,
+                    style_scores=transition.track_a.style_scores,
+                    style_confidence=transition.track_a.style_confidence,
+                    mix_in_point=transition.track_a.mix_in_point,
+                    mix_out_point=transition.track_a.mix_out_point,
+                    mixable_sections=transition.track_a.mixable_sections,
+                    intro_end=transition.track_a.intro_end,
+                    outro_start=transition.track_a.outro_start,
+                    intro_energy=transition.track_a.intro_energy,
+                    outro_energy=transition.track_a.outro_energy,
+                    energy_profile=transition.track_a.energy_profile,
+                    vocal_sections=transition.track_a.vocal_sections,
+                    instrumental_sections=transition.track_a.instrumental_sections,
                 )
 
                 track_b_summary = TrackSummary(
@@ -288,6 +302,20 @@ async def get_job_results(job_id: str, db: Session = Depends(get_db)):
                     beat_confidence_scores=transition.track_b.beat_confidence_scores,
                     beat_regularity=transition.track_b.beat_regularity,
                     average_beat_interval=transition.track_b.average_beat_interval,
+                    # Enhanced analysis fields
+                    dominant_style=transition.track_b.dominant_style,
+                    style_scores=transition.track_b.style_scores,
+                    style_confidence=transition.track_b.style_confidence,
+                    mix_in_point=transition.track_b.mix_in_point,
+                    mix_out_point=transition.track_b.mix_out_point,
+                    mixable_sections=transition.track_b.mixable_sections,
+                    intro_end=transition.track_b.intro_end,
+                    outro_start=transition.track_b.outro_start,
+                    intro_energy=transition.track_b.intro_energy,
+                    outro_energy=transition.track_b.outro_energy,
+                    energy_profile=transition.track_b.energy_profile,
+                    vocal_sections=transition.track_b.vocal_sections,
+                    instrumental_sections=transition.track_b.instrumental_sections,
                 )
 
                 # Add tracks to the unique tracks list

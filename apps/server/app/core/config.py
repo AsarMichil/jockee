@@ -41,7 +41,7 @@ class Settings(BaseSettings):
 
     # yt-dlp settings
     YTDL_RATE_LIMIT: str = "2.0M"
-    YTDL_MAX_DOWNLOADS_PER_MINUTE: int = 10
+    YTDL_MAX_DOWNLOADS_PER_MINUTE: int = 49
 
     # CORS
     CORS_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:8080"]
