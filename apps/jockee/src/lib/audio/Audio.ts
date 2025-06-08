@@ -73,9 +73,9 @@ export const deckBVolumeAtom = atom<number>(1.0);
 
 // EQ state atoms for both decks
 export interface EQBand {
-  low: number;    // -40 to +40 dB
-  mid: number;    // -40 to +40 dB
-  high: number;   // -40 to +40 dB
+  low: number; // -40 to +40 dB
+  mid: number; // -40 to +40 dB
+  high: number; // -40 to +40 dB
 }
 
 export const deckAEQAtom = atom<EQBand>({
@@ -201,7 +201,7 @@ export const loadTrackAtom = atom(
 
       const newDeckState = await loadTrack(track, audioElement);
       set(deckStateAtom, newDeckState);
-      
+
       console.log(`Track "${track.title}" loaded onto ${deck}`);
     } catch (error) {
       console.error(`Failed to load track onto ${deck}:`, error);
@@ -228,7 +228,7 @@ export const scrubDeckAtom = atom(
   null,
   (
     get,
-    set,
+    _set,
     { deck, position }: { deck: "deckA" | "deckB"; position: number }
   ) => {
     const audioElementAtom =
@@ -370,14 +370,17 @@ export const playDeckAtom = atom(
 );
 
 // Pause deck action
-export const pauseDeckAtom = atom(null, (get, set, deck: "deckA" | "deckB") => {
-  const audioElementAtom =
-    deck === "deckA" ? deckAAudioElementAtom : deckBAudioElementAtom;
-  const audioElement = get(audioElementAtom);
-  // Pause the audio element
-  audioElement.pause();
-  console.log(`paused deck ${deck} at: ${audioElement.currentTime}`);
-});
+export const pauseDeckAtom = atom(
+  null,
+  (get, _set, deck: "deckA" | "deckB") => {
+    const audioElementAtom =
+      deck === "deckA" ? deckAAudioElementAtom : deckBAudioElementAtom;
+    const audioElement = get(audioElementAtom);
+    // Pause the audio element
+    audioElement.pause();
+    console.log(`paused deck ${deck} at: ${audioElement.currentTime}`);
+  }
+);
 
 export const playPauseDeckAtom = atom(
   null,
@@ -483,7 +486,7 @@ const computePlaybackVolume = (
 // Set deck BPM action
 export const setDeckBpmAtom = atom(
   null,
-  (get, set, { deck, bpm }: { deck: "deckA" | "deckB"; bpm: number }) => {
+  (get, _set, { deck, bpm }: { deck: "deckA" | "deckB"; bpm: number }) => {
     const audioElementAtom =
       deck === "deckA" ? deckAAudioElementAtom : deckBAudioElementAtom;
     const deckStateAtom = deck === "deckA" ? deckAAtom : deckBAtom;
@@ -506,7 +509,7 @@ export const setDeckBpmAtom = atom(
 // Wavesurfer setter atoms
 export const setDeckAWavesurferAtom = atom(
   null,
-  (get, set, wavesurfer: WaveSurfer) => {
+  (_get, set, wavesurfer: WaveSurfer) => {
     console.log("Setting wavesurfer for deckA");
     set(deckAWavesurferAtom, wavesurfer);
   }
@@ -514,7 +517,7 @@ export const setDeckAWavesurferAtom = atom(
 
 export const setDeckBWavesurferAtom = atom(
   null,
-  (get, set, wavesurfer: WaveSurfer) => {
+  (_get, set, wavesurfer: WaveSurfer) => {
     console.log("Setting wavesurfer for deckB");
     set(deckBWavesurferAtom, wavesurfer);
   }
@@ -524,61 +527,68 @@ export const setDeckBWavesurferAtom = atom(
 export const initializeEQFiltersAtom = atom(
   null,
   (get, set, deck: "deckA" | "deckB") => {
-    const audioElementAtom = deck === "deckA" ? deckAAudioElementAtom : deckBAudioElementAtom;
+    const audioElementAtom =
+      deck === "deckA" ? deckAAudioElementAtom : deckBAudioElementAtom;
     const filtersAtom = deck === "deckA" ? deckAFiltersAtom : deckBFiltersAtom;
-    
+
     const audioElement = get(audioElementAtom);
     const existingFilters = get(filtersAtom);
-    
+
     // Don't reinitialize if filters already exist
     if (existingFilters?.audioContext) {
       return;
     }
-    
+
     try {
       // Create or get AudioContext - in a real app you'd want to share this
       let audioContext: AudioContext;
       try {
         audioContext = new AudioContext();
       } catch (error) {
-        console.warn("AudioContext creation failed, EQ will not be available:", error);
+        console.warn(
+          "AudioContext creation failed, EQ will not be available:",
+          error
+        );
         return;
       }
-      
+
       // Create MediaElementSource - this can only be done once per audio element
       let mediaSource: MediaElementAudioSourceNode;
       try {
         mediaSource = audioContext.createMediaElementSource(audioElement);
       } catch (error) {
         // If the element already has a source, we can't create another one
-        console.warn("MediaElementSource already exists or failed to create, EQ will not be available:", error);
+        console.warn(
+          "MediaElementSource already exists or failed to create, EQ will not be available:",
+          error
+        );
         audioContext.close();
         return;
       }
-      
+
       // Create BiquadFilter nodes for each frequency band
       const lowFilter = audioContext.createBiquadFilter();
-      lowFilter.type = 'lowshelf';
+      lowFilter.type = "lowshelf";
       lowFilter.frequency.value = 320; // 320 Hz
       lowFilter.gain.value = 0;
-      
+
       const midFilter = audioContext.createBiquadFilter();
-      midFilter.type = 'peaking';
+      midFilter.type = "peaking";
       midFilter.frequency.value = 1000; // 1000 Hz
       midFilter.Q.value = 1;
       midFilter.gain.value = 0;
-      
+
       const highFilter = audioContext.createBiquadFilter();
-      highFilter.type = 'highshelf';
+      highFilter.type = "highshelf";
       highFilter.frequency.value = 3200; // 3200 Hz
       highFilter.gain.value = 0;
-      
+
       // Connect the audio chain: source -> low -> mid -> high -> destination
       mediaSource.connect(lowFilter);
       lowFilter.connect(midFilter);
       midFilter.connect(highFilter);
       highFilter.connect(audioContext.destination);
-      
+
       // Store the filters in the atom
       set(filtersAtom, {
         lowFilter,
@@ -587,7 +597,7 @@ export const initializeEQFiltersAtom = atom(
         audioContext,
         mediaSource
       });
-      
+
       console.log(`EQ filters initialized for ${deck}`);
     } catch (error) {
       console.error(`Failed to initialize EQ filters for ${deck}:`, error);
@@ -598,36 +608,44 @@ export const initializeEQFiltersAtom = atom(
 // Initialize EQ filters when first EQ adjustment is made
 export const setEQBandAtom = atom(
   null,
-  (get, set, { deck, band, value }: { deck: "deckA" | "deckB"; band: "low" | "mid" | "high"; value: number }) => {
+  (
+    get,
+    set,
+    {
+      deck,
+      band,
+      value
+    }: { deck: "deckA" | "deckB"; band: "low" | "mid" | "high"; value: number }
+  ) => {
     const eqAtom = deck === "deckA" ? deckAEQAtom : deckBEQAtom;
     const filtersAtom = deck === "deckA" ? deckAFiltersAtom : deckBFiltersAtom;
-    
+
     // Initialize filters if they don't exist yet
     const filters = get(filtersAtom);
     if (!filters) {
       set(initializeEQFiltersAtom, deck);
     }
-    
+
     // Update the EQ state
     const currentEQ = get(eqAtom);
     const newEQ = { ...currentEQ, [band]: value };
     set(eqAtom, newEQ);
-    
+
     // Update the actual filter
     const updatedFilters = get(filtersAtom);
     if (updatedFilters) {
       switch (band) {
-        case 'low':
+        case "low":
           if (updatedFilters.lowFilter) {
             updatedFilters.lowFilter.gain.value = value;
           }
           break;
-        case 'mid':
+        case "mid":
           if (updatedFilters.midFilter) {
             updatedFilters.midFilter.gain.value = value;
           }
           break;
-        case 'high':
+        case "high":
           if (updatedFilters.highFilter) {
             updatedFilters.highFilter.gain.value = value;
           }
@@ -637,19 +655,16 @@ export const setEQBandAtom = atom(
   }
 );
 
-export const resetEQAtom = atom(
-  null,
-  (get, set, deck: "deckA" | "deckB") => {
-    const eqAtom = deck === "deckA" ? deckAEQAtom : deckBEQAtom;
-    const resetEQ = { low: 0, mid: 0, high: 0 };
-    set(eqAtom, resetEQ);
-    
-    // Reset the actual filters
-    set(setEQBandAtom, { deck, band: "low", value: 0 });
-    set(setEQBandAtom, { deck, band: "mid", value: 0 });
-    set(setEQBandAtom, { deck, band: "high", value: 0 });
-  }
-);
+export const resetEQAtom = atom(null, (_get, set, deck: "deckA" | "deckB") => {
+  const eqAtom = deck === "deckA" ? deckAEQAtom : deckBEQAtom;
+  const resetEQ = { low: 0, mid: 0, high: 0 };
+  set(eqAtom, resetEQ);
+
+  // Reset the actual filters
+  set(setEQBandAtom, { deck, band: "low", value: 0 });
+  set(setEQBandAtom, { deck, band: "mid", value: 0 });
+  set(setEQBandAtom, { deck, band: "high", value: 0 });
+});
 
 // Helper function for setting wavesurfer (maintains compatibility)
 export const setDeckWavesurfer = (

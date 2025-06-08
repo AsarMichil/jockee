@@ -1,5 +1,5 @@
 import { useAudioActions } from "@/lib/audio/AudioStoreProvider";
-import { AnalysisJob, Track } from "@/lib/types";
+import { AnalysisJob, JobResultResponse, Track } from "@/lib/types";
 import { use, useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -20,7 +20,8 @@ import {
   Clock,
   Zap,
   Headphones,
-  ArrowLeft
+  ArrowLeft,
+  Radio
 } from "lucide-react";
 import { PlaybackSlider } from "./PlaybackSlider";
 import BPMSlider from "./BPMSlider";
@@ -40,6 +41,12 @@ import { BPlayButton } from "./BigAssPlayButton";
 import { AutoplayButton } from "./AutoplayButton";
 import { useNavigate } from "react-router-dom";
 import { BeatSyncButtons } from "./BeatSyncButtons";
+import {
+  loadMixAtom,
+  startAutoDJAtom,
+  stopAutoDJAtom,
+  djStateAtom
+} from "@/lib/dj-agent";
 
 const formatTime = (seconds: number) => {
   const mins = Math.floor(seconds / 60);
@@ -59,6 +66,13 @@ export default function Player({ data }: { data: Promise<AnalysisJob> }) {
 
   const deckA = useAtomValue(deckAAtom);
   const deckB = useAtomValue(deckBAtom);
+
+  // DJ Agent hooks
+  const loadMix = useSetAtom(loadMixAtom);
+  const startAutoDJ = useSetAtom(startAutoDJAtom);
+  const stopAutoDJ = useSetAtom(stopAutoDJAtom);
+  const djState = useAtomValue(djStateAtom);
+
   console.log("deckA", deckA);
   console.log("deckB", deckB);
 
@@ -69,9 +83,12 @@ export default function Player({ data }: { data: Promise<AnalysisJob> }) {
   useEffect(() => {
     if (job.tracks) {
       setQueuedTracks(job.tracks);
-      // Don't auto-load tracks - wait for user interaction
+      // Load mix instructions into DJ agent
+      if (job.mix_instructions) {
+        loadMix({ mix_instructions: job.mix_instructions } as JobResultResponse);
+      }
     }
-  }, [job.tracks, setQueuedTracks]);
+  }, [job.tracks, job.mix_instructions, setQueuedTracks, loadMix]);
 
   const initializeAudioAndLoadTrack = async (track: Track, deck: "A" | "B") => {
     try {
@@ -108,6 +125,18 @@ export default function Player({ data }: { data: Promise<AnalysisJob> }) {
       await initializeAudioAndLoadTrack(track, deck);
     } catch (error) {
       console.error(`Failed to load track to Deck ${deck}:`, error);
+    }
+  };
+
+  const handleAutoDJ = async () => {
+    if (djState.status === "playing") {
+      stopAutoDJ();
+    } else {
+      const success = await startAutoDJ();
+      if (success) {
+        setIsAudioInitialized(true);
+        setShowLoadDialog(false);
+      }
     }
   };
 
@@ -247,7 +276,9 @@ export default function Player({ data }: { data: Promise<AnalysisJob> }) {
               {/* EQ Controls */}
               <div className="space-y-4">
                 <div className="text-center">
-                  <h3 className="text-sm font-semibold text-gray-700 mb-4">Equalizer</h3>
+                  <h3 className="text-sm font-semibold text-gray-700 mb-4">
+                    Equalizer
+                  </h3>
                 </div>
                 <div className="grid grid-cols-1 gap-4">
                   <EqualizerControl deck="deckA" title="Deck A EQ" />
@@ -273,11 +304,45 @@ export default function Player({ data }: { data: Promise<AnalysisJob> }) {
                   </h3>
                   <TrackProgress
                     mixInstructions={job.mix_instructions}
-                    currentTime={0} // This would be connected to actual playback time
+                    currentTime={djState.elapsed_time || 0}
                     className="bg-gray-800 text-white"
                   />
                 </div>
               )}
+
+              {/* Auto DJ Controls */}
+              <div className="space-y-2">
+                <h3 className="text-sm font-medium text-gray-700">Auto DJ</h3>
+                <div className="flex flex-col space-y-2">
+                  <Button
+                    onClick={handleAutoDJ}
+                    variant={
+                      djState.status === "playing" ? "destructive" : "default"
+                    }
+                    className="w-full"
+                    disabled={djState.status === "no_mix_loaded"}
+                  >
+                    <Radio className="h-4 w-4 mr-2" />
+                    {djState.status === "playing"
+                      ? "Stop Auto DJ"
+                      : "Start Auto DJ"}
+                  </Button>
+
+                  {djState.status !== "no_mix_loaded" && (
+                    <div className="text-xs text-gray-600 space-y-1">
+                      <div>Status: {djState.status}</div>
+                      {djState.current_track && (
+                        <div>Now Playing: {djState.current_track.title}</div>
+                      )}
+                      {djState.progress !== undefined && (
+                        <div>
+                          Progress: {Math.round(djState.progress * 100)}%
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
             </CardContent>
           </Card>
 

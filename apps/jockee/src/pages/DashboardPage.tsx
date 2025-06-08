@@ -20,7 +20,6 @@ export default function DashboardPage() {
   const [recentJobs, setRecentJobs] = useState<AnalysisJob[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>("");
-
   useEffect(() => {
     const initializeDashboard = async () => {
       try {

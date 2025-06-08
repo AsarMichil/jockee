@@ -583,7 +583,7 @@ class AudioAnalyzer:
             intro_energy_b = track_b.get("intro_energy", energy_b)
             
             energy_diff = abs(outro_energy_a - intro_energy_b)
-                compatibility["energy_compatibility"] = max(0.0, 1.0 - energy_diff)
+            compatibility["energy_compatibility"] = max(0.0, 1.0 - energy_diff)
 
             # Style compatibility - check if both tracks have style data
             style_a = track_a.get("dominant_style")
