@@ -26,7 +26,8 @@ export default function DashboardPage() {
         // Check authentication status first
         const isAuthenticated = await sessionManager.checkAuth();
         if (!isAuthenticated) {
-          navigate("/login");
+          const redirectParam = `?redirect=${encodeURIComponent('/dashboard')}`;
+          navigate(`/login${redirectParam}`);
           return;
         }
 

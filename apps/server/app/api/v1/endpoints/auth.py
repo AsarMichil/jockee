@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException, Request, Query, Depends
+from fastapi.responses import RedirectResponse
 from app.core.spotify import SpotifyClient
 from app.api.v1.dependencies import redis_client, get_spotify_client
 import uuid
@@ -11,7 +12,7 @@ router = APIRouter()
 
 
 @router.get("/spotify")
-async def spotify_auth(request: Request):
+async def spotify_auth(request: Request, redirect: str = Query(None, description="URL to redirect to after authentication")):
     """
     Initiate Spotify OAuth flow.
     """
@@ -30,11 +31,15 @@ async def spotify_auth(request: Request):
             session_id = str(uuid.uuid4())
             request.session["session_id"] = session_id
 
-        # Store the state and session mapping in Redis for 10 minutes
+        # Store the state, session mapping, and redirect URL in Redis for 10 minutes
         state_key = f"spotify_state:{state}"
-        redis_client.setex(state_key, 600, session_id)  # 10 minutes
+        state_data = {
+            "session_id": session_id,
+            "redirect_url": redirect  # Store the redirect URL
+        }
+        redis_client.setex(state_key, 600, json.dumps(state_data))  # 10 minutes
 
-        logger.info(f"Starting Spotify auth for session {session_id} with state {state}")
+        logger.info(f"Starting Spotify auth for session {session_id} with state {state} and redirect {redirect}")
 
         return {"auth_url": auth_url, "session_id": session_id, "state": state}
 
@@ -68,15 +73,17 @@ async def spotify_callback(
         raise HTTPException(status_code=400, detail="Missing state parameter")
 
     try:
-        # Validate state parameter and get session ID
+        # Validate state parameter and get session ID + redirect URL
         state_key = f"spotify_state:{state}"
-        session_id = redis_client.get(state_key)
+        state_data_raw = redis_client.get(state_key)
         
-        if not session_id:
+        if not state_data_raw:
             logger.error(f"Invalid or expired state parameter: {state}")
             raise HTTPException(status_code=400, detail="Invalid or expired authentication session")
         
-        session_id = session_id.decode('utf-8')
+        state_data = json.loads(state_data_raw.decode('utf-8'))
+        session_id = state_data.get("session_id")
+        redirect_url = state_data.get("redirect_url")
         
         # Clean up the state key
         redis_client.delete(state_key)
@@ -96,12 +103,14 @@ async def spotify_callback(
             json.dumps(token_info),
         )
 
-        logger.info(f"Spotify auth successful for session {session_id}")
+        logger.info(f"Spotify auth successful for session {session_id}, redirecting to {redirect_url}")
+        return RedirectResponse(url=redirect_url)
 
         return {
             "message": "Spotify authentication successful",
             "session_id": session_id,
             "expires_in": token_info.get("expires_in", 3600),
+            "redirect_url": redirect_url  # Include redirect URL in response
         }
 
     except HTTPException:

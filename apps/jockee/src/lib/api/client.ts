@@ -25,10 +25,12 @@ class ApiClient {
     try {
       const response = await fetch(url, config);
 
-      // Handle 401 unauthorized - redirect to login
+      // Handle 401 unauthorized - redirect to login with current URL as redirect parameter
       if (response.status === 401) {
         if (typeof window !== "undefined") {
-          window.location.href = "/login";
+          const currentPath = window.location.pathname;
+          const redirectParam = currentPath !== '/' ? `?redirect=${encodeURIComponent(currentPath)}` : '';
+          window.location.href = `/login${redirectParam}`;
         }
         throw new Error("Unauthorized");
       }

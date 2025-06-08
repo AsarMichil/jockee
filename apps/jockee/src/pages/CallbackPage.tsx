@@ -43,9 +43,10 @@ export default function CallbackPage() {
 
         setStatus('success');
         
-        // Redirect to dashboard after a short delay
+        // Use the redirect URL from the server response, default to dashboard if not provided
+        const redirectTo = data.redirect_url || '/dashboard';
         setTimeout(() => {
-          navigate('/dashboard');
+          navigate(redirectTo);
         }, 2000);
 
       } catch (err) {
