@@ -7,6 +7,8 @@ from app.core.config import settings
 from app.models.track import FileSource
 import re
 import time
+import subprocess
+import tempfile
 
 logger = logging.getLogger(__name__)
 
@@ -150,6 +152,11 @@ class AudioFetcher:
             # Check if download was successful
             mp3_path = file_path.with_suffix(".mp3")
             if mp3_path.exists() and mp3_path.stat().st_size > 0:
+                # Normalize the audio for consistent loudness
+                normalization_success = self._normalize_audio(mp3_path)
+                if not normalization_success:
+                    logger.warning(f"Audio normalization failed for {artist} - {title}, but keeping original file")
+                
                 file_size = mp3_path.stat().st_size
                 result.update(
                     {
@@ -166,6 +173,11 @@ class AudioFetcher:
                     # Found a file, use the first one
                     actual_file = possible_files[0]
                     if actual_file.stat().st_size > 0:
+                        # Normalize the audio for consistent loudness
+                        normalization_success = self._normalize_audio(actual_file)
+                        if not normalization_success:
+                            logger.warning(f"Audio normalization failed for {artist} - {title}, but keeping original file")
+                            
                         file_size = actual_file.stat().st_size
                         result.update(
                             {
@@ -266,3 +278,74 @@ class AudioFetcher:
                         logger.error(f"Error deleting file {file_path}: {e}")
 
         return deleted_count
+
+    def _normalize_audio(self, file_path: Path) -> bool:
+        """
+        Normalize audio file to consistent loudness using FFmpeg's loudnorm filter.
+        Uses EBU R128 standard with target of -16 LUFS.
+        
+        Args:
+            file_path: Path to the audio file to normalize
+            
+        Returns:
+            bool: True if normalization was successful, False otherwise
+        """
+        try:
+            # Create temporary file for normalized audio
+            with tempfile.NamedTemporaryFile(suffix='.mp3', delete=False) as temp_file:
+                temp_path = Path(temp_file.name)
+            
+            # FFmpeg command for loudness normalization
+            # Target: -16 LUFS (good for music playback)
+            # Range: 11 LU (dynamic range)  
+            # Threshold: -1.5 dBTP (true peak threshold)
+            cmd = [
+                'ffmpeg',
+                '-i', str(file_path),
+                '-af', 'loudnorm=I=-16:TP=-1.5:LRA=11:print_format=summary',
+                '-ar', '44100',  # Standard sample rate
+                '-b:a', '320k',  # High quality bitrate
+                '-y',  # Overwrite output file
+                str(temp_path)
+            ]
+            
+            logger.info(f"Normalizing audio: {file_path.name}")
+            
+            # Run FFmpeg normalization
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=300  # 5 minute timeout
+            )
+            
+            if result.returncode == 0:
+                # Check if normalized file was created and has content
+                if temp_path.exists() and temp_path.stat().st_size > 0:
+                    # Replace original file with normalized version
+                    temp_path.replace(file_path)
+                    logger.info(f"Successfully normalized audio: {file_path.name}")
+                    return True
+                else:
+                    logger.warning(f"Normalization produced empty file for: {file_path.name}")
+                    # Clean up empty temp file
+                    if temp_path.exists():
+                        temp_path.unlink()
+                    return False
+            else:
+                logger.warning(f"FFmpeg normalization failed for {file_path.name}: {result.stderr}")
+                # Clean up temp file
+                if temp_path.exists():
+                    temp_path.unlink()
+                return False
+                
+        except subprocess.TimeoutExpired:
+            logger.error(f"Normalization timeout for {file_path.name}")
+            if temp_path.exists():
+                temp_path.unlink()
+            return False
+        except Exception as e:
+            logger.error(f"Error normalizing audio {file_path.name}: {e}")
+            if 'temp_path' in locals() and temp_path.exists():
+                temp_path.unlink()
+            return False
