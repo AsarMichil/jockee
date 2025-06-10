@@ -18,8 +18,6 @@ export default function VolumeSlider({
   className = "",
   deckName
 }: VolumeSliderProps) {
-  console.log("DECK NAME", deckName);
-
   const setDeckVolume = useSetAtom(setDeckVolumeAtom);
   const volume = useAtomValue(
     deckName === "A" ? deckAVolumeAtom : deckBVolumeAtom

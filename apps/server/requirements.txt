@@ -50,3 +50,6 @@ pytest-mock==3.12.0
 # Development
 ruff==0.8.4
 mypy==1.13.0 
+
+# AI
+transformers==4.52.4

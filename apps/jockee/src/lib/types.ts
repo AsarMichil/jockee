@@ -4,11 +4,11 @@ export interface Track {
   title: string;
   artist: string;
   duration: number;
-  file_source: 'local' | 'youtube' | 'unavailable';
+  file_source: "local" | "youtube" | "unavailable";
   bpm: number;
   key: string;
   energy: number;
-  
+
   // Beat analysis fields for beat matching
   beat_timestamps?: number[];
   beat_intervals?: number[];
@@ -16,13 +16,13 @@ export interface Track {
   beat_confidence_scores?: number[];
   beat_regularity?: number;
   average_beat_interval?: number;
-  
+
   // Enhanced analysis fields
   // Style analysis
   dominant_style?: string;
   style_scores?: Record<string, number>;
   style_confidence?: number;
-  
+
   // Mix points analysis
   mix_in_point?: number;
   mix_out_point?: number;
@@ -32,7 +32,7 @@ export interface Track {
     energy: number;
     beats_aligned: boolean;
   }>;
-  
+
   // Section analysis
   intro_end?: number;
   outro_start?: number;
@@ -42,7 +42,7 @@ export interface Track {
     time: number;
     energy: number;
   }>;
-  
+
   // Vocal analysis
   vocal_sections?: Array<{
     start: number;
@@ -54,7 +54,7 @@ export interface Track {
     end: number;
     confidence: number;
   }>;
-  
+
   // Additional audio analysis fields
   danceability?: number;
   valence?: number;
@@ -65,6 +65,13 @@ export interface Track {
   loudness?: number;
 }
 
+export type TransitionTechnique =
+  | "crossfade"
+  | "smooth_blend"
+  | "quick_cut"
+  | "beatmatch"
+  | "creative";
+
 export interface Transition {
   id: string;
   position: number;
@@ -72,7 +79,7 @@ export interface Transition {
   track_b: Track;
   transition_start: number;
   transition_duration: number;
-  technique: 'crossfade' | 'smooth_blend' | 'quick_cut' | 'beatmatch' | 'creative';
+  technique: TransitionTechnique;
   bpm_adjustment: number;
   bpm_compatibility?: number;
   key_compatibility?: number;
@@ -100,7 +107,7 @@ export interface MixInstructions {
 
 export interface AnalysisJob {
   id: string;
-  status: 'pending' | 'processing' | 'completed' | 'failed';
+  status: "pending" | "processing" | "completed" | "failed";
   playlist_url: string;
   playlist_name?: string;
   total_tracks: number;
@@ -118,14 +125,14 @@ export interface AnalysisJob {
 }
 
 // DJ Agent Types
-export type DJEventType = 
-  | 'track_started'
-  | 'track_ended'
-  | 'transition_started'
-  | 'transition_ended'
-  | 'mix_started'
-  | 'mix_ended'
-  | 'error';
+export type DJEventType =
+  | "track_started"
+  | "track_ended"
+  | "transition_started"
+  | "transition_ended"
+  | "mix_started"
+  | "mix_ended"
+  | "error";
 
 export interface DJEvent {
   event_type: DJEventType;
@@ -133,15 +140,11 @@ export interface DJEvent {
   data: Record<string, unknown>;
 }
 
-export type DJStatus = 'no_mix_loaded' | 'playing' | 'paused';
+export type DJStatus = "no_mix_loaded" | "playing" | "paused";
 
 export interface DJState {
   status: DJStatus;
   current_position?: number;
-  total_transitions?: number;
-  elapsed_time?: number;
-  total_duration?: number;
-  progress?: number;
   current_track?: Track;
 }
 
@@ -150,7 +153,7 @@ export interface TransitionConfig {
   track_b: Track;
   transition: Transition;
   audio_settings?: {
-    crossfade_curve?: 'linear' | 'exponential' | 'logarithmic';
+    crossfade_curve?: "linear" | "exponential" | "logarithmic";
     eq_matching?: boolean;
     bpm_sync?: boolean;
     beat_sync?: boolean;
@@ -158,10 +161,10 @@ export interface TransitionConfig {
 }
 
 export interface AudioControllerConfig {
-  backend: 'web_audio' | 'native' | 'mock';
+  backend: "web_audio" | "native" | "mock";
   audio_context?: AudioContext;
   master_volume?: number;
-  crossfade_quality?: 'high' | 'medium' | 'low';
+  crossfade_quality?: "high" | "medium" | "low";
 }
 
 // Enhanced API Response Types
@@ -179,7 +182,7 @@ export interface PlaylistAnalysisRequest {
 
 export interface JobStatusResponse {
   id: string;
-  status: 'pending' | 'processing' | 'completed' | 'failed';
+  status: "pending" | "processing" | "completed" | "failed";
   total_tracks: number;
   analyzed_tracks: number;
   downloaded_tracks: number;
@@ -194,7 +197,7 @@ export interface JobStatusResponse {
 
 export interface JobResultResponse {
   id: string;
-  status: 'pending' | 'processing' | 'completed' | 'failed';
+  status: "pending" | "processing" | "completed" | "failed";
   playlist_url: string;
   playlist_name?: string;
   total_tracks: number;
@@ -276,4 +279,4 @@ export interface PlaybackState {
   nextTrack: Track | null;
   isTransitioning: boolean;
   transitionProgress: number;
-} 
+}
