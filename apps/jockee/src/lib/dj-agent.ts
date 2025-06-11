@@ -34,8 +34,11 @@ import {
   loadTrackAtom,
   deckAAudioElementAtom,
   deckBAudioElementAtom,
-  setCrossfaderAtom
+  setCrossfaderAtom,
+  setDeckBpmAtom
 } from "./audio/Audio";
+
+const MAGIC_BPM_DELTA_UNIT = 0.005;
 
 /**
  * DJ Agent state atom
@@ -137,34 +140,18 @@ export const startAutoDJAtom = atom(null, async (get, set) => {
   const currentTransition =
     djState.currentMix.transitions[djState.currentIndex];
   console.log("current transition is:", currentTransition);
-  let fromDeckElement: HTMLAudioElement;
-  let toDeckElement: HTMLAudioElement;
-  if (leadingDeckName === "deckA") {
-    fromDeckElement = get(deckAAudioElementAtom);
-    toDeckElement = get(deckBAudioElementAtom);
-  } else {
-    fromDeckElement = get(deckBAudioElementAtom);
-    toDeckElement = get(deckAAudioElementAtom);
-  }
-  const strat = new CrossfadeStrategy(
+
+  // Create initial transition strategy using helper function
+  const initialStrategy = createTransitionStrategy(
     get,
     set,
-    "crossfade",
     currentTransition,
     fromTrack,
     toTrack,
-    fromTrack.id,
-    toTrack.id,
-    fromDeckElement,
-    toDeckElement,
-    leadingDeckName,
-    {
-      adjustedPlaybackRateFrom: fromDeckElement.playbackRate, // keep normal
-      adjustedPlaybackRateTo: fromTrack.bpm / toTrack.bpm
-    }
+    leadingDeckName
   );
 
-  toggleDjStateFrame(get, set, strat);
+  toggleDjStateFrame(get, set, initialStrategy);
 
   console.log("Auto DJ started");
   return true;
@@ -187,35 +174,201 @@ export const stopAutoDJAtom = atom(null, (get, set) => {
   console.log("Auto DJ stopped");
 });
 
+/**
+ * Helper function to create a transition strategy
+ */
+const createTransitionStrategy = (
+  get: Getter,
+  set: Setter,
+  transition: Transition,
+  fromTrack: Track,
+  toTrack: Track,
+  fromDeckName: "deckA" | "deckB"
+): TransitionStrategy => {
+  const fromDeckElement =
+    fromDeckName === "deckA"
+      ? get(deckAAudioElementAtom)
+      : get(deckBAudioElementAtom);
+  const toDeckElement =
+    fromDeckName === "deckA"
+      ? get(deckBAudioElementAtom)
+      : get(deckAAudioElementAtom);
+
+  // For now, we only support crossfade, but this can be extended
+  const technique = transition.technique || "crossfade";
+
+  if (technique === "crossfade") {
+    return new CrossfadeStrategy(
+      get,
+      set,
+      "crossfade",
+      transition,
+      fromTrack,
+      toTrack,
+      fromTrack.id,
+      toTrack.id,
+      fromDeckElement,
+      toDeckElement,
+      fromDeckName,
+      {
+        adjustedPlaybackRateFrom: fromDeckElement.playbackRate,
+        adjustedPlaybackRateTo: fromTrack.bpm / toTrack.bpm
+      }
+    );
+  } else if (technique === "quick_cut") {
+    return new QuickCutStrategy(
+      get,
+      set,
+      "quick_cut",
+      transition,
+      fromTrack,
+      toTrack,
+      fromTrack.id,
+      toTrack.id,
+      fromDeckElement,
+      toDeckElement,
+      fromDeckName,
+      {
+        adjustedPlaybackRateFrom: fromDeckElement.playbackRate,
+        adjustedPlaybackRateTo: fromTrack.bpm / toTrack.bpm
+      }
+    );
+  }
+
+  // Default to crossfade for unsupported techniques
+  return new CrossfadeStrategy(
+    get,
+    set,
+    "crossfade",
+    transition,
+    fromTrack,
+    toTrack,
+    fromTrack.id,
+    toTrack.id,
+    fromDeckElement,
+    toDeckElement,
+    fromDeckName,
+    {
+      adjustedPlaybackRateFrom: fromDeckElement.playbackRate,
+      adjustedPlaybackRateTo: fromTrack.bpm / toTrack.bpm
+    }
+  );
+};
+
+/**
+ * Setup the next transition
+ */
+const setupNextTransition = (
+  get: Getter,
+  set: Setter,
+  currentIndex: number
+): TransitionStrategy | null => {
+  const djState = get(djAgentAtom);
+  const currentQueue = get(queueAtom).queue;
+
+  // Check if we have more transitions to process
+  if (
+    !djState.currentMix ||
+    currentIndex + 1 >= djState.currentMix.transitions.length
+  ) {
+    console.log("No more transitions to setup");
+    return null;
+  }
+
+  // Check if we have enough tracks for the next transition
+  if (currentIndex + 2 >= currentQueue.length) {
+    console.log("No more tracks in queue for next transition");
+    return null;
+  }
+
+  const nextTransition = djState.currentMix.transitions[currentIndex + 1];
+  const fromTrack = currentQueue[currentIndex + 1]; // The "to" track becomes the "from" track
+  const toTrack = currentQueue[currentIndex + 2]; // Next track in sequence
+
+  // Determine which deck is currently the "to" deck (it becomes the "from" deck for next transition)
+  const currentLeadingDeck = currentIndex % 2 === 0 ? "deckA" : "deckB";
+  const nextFromDeck = currentLeadingDeck === "deckA" ? "deckB" : "deckA"; // The current "to" deck
+
+  // Load the track after next on the deck that just finished
+  if (currentIndex + 2 < currentQueue.length) {
+    set(loadTrackAtom, {
+      track: currentQueue[currentIndex + 2],
+      deck: currentLeadingDeck // Load track after next on the deck that just finished playing
+    });
+  }
+
+  // Update DJ state to the next transition
+  set(djAgentAtom, {
+    ...djState,
+    currentIndex: currentIndex + 1
+  });
+
+  console.log(
+    `Setting up transition ${currentIndex + 2}: ${fromTrack.title} -> ${
+      toTrack.title
+    }`
+  );
+
+  return createTransitionStrategy(
+    get,
+    set,
+    nextTransition,
+    fromTrack,
+    toTrack,
+    nextFromDeck
+  );
+};
+
 const toggleDjStateFrame = (
   get: Getter,
   set: Setter,
-  strat: TransitionStrategy
+  initialStrategy: TransitionStrategy
 ) => {
   let currentFrame = -1;
+  let currentStrategy: TransitionStrategy | null = initialStrategy;
+
   const animate = () => {
     console.log("Animate", currentFrame);
     const djAgent = get(djAgentAtom);
+
     if (!djAgent.isActive) {
       cancelAnimationFrame(currentFrame);
       return;
     }
 
-    // check if current track (which can be a or b) is at a transition point
+    if (!currentStrategy) {
+      console.log("No current strategy, stopping DJ");
+      set(stopAutoDJAtom);
+      return;
+    }
 
-    // inside a transition point calculate what the state should be and set it to that state ie crossfade %, loudness, bpm etc
-    strat.tick();
+    // Run the current transition strategy
+    currentStrategy.tick();
+
+    // Check if current transition is complete
+    if (currentStrategy.isComplete) {
+      console.log("Current transition complete, setting up next transition");
+
+      // Setup next transition
+      const nextStrategy = setupNextTransition(get, set, djAgent.currentIndex);
+
+      if (nextStrategy) {
+        currentStrategy = nextStrategy;
+        console.log("Next transition ready");
+      } else {
+        console.log("All transitions complete, stopping Auto DJ");
+        set(stopAutoDJAtom);
+        return;
+      }
+    }
+
     currentFrame = requestAnimationFrame(animate);
   };
+
   const agent = get(djAgentAtom);
   if (agent.isActive) {
-    // turning off animate
     currentFrame = requestAnimationFrame(animate);
-  } else {
-    // turning it on
   }
-
-  // scroll(timestamp, distanceToScroll, secondsToScroll)
 };
 
 /**
@@ -260,6 +413,7 @@ interface TransitionStrategy {
   fromDeckElement: HTMLAudioElement;
   toDeckElement: HTMLAudioElement;
   fromDeckName: "deckA" | "deckB";
+  isComplete: boolean;
 
   apply(): void;
   tick(): void;
@@ -288,6 +442,8 @@ class CrossfadeStrategy implements TransitionStrategy {
         adjustedPlaybackRateTo: number;
       }
     | undefined;
+  isComplete: boolean;
+  matchedBpm: boolean;
 
   constructor(
     get: Getter,
@@ -318,35 +474,58 @@ class CrossfadeStrategy implements TransitionStrategy {
     this.toDeckTrack = toDeckTrack;
     this.matchBPM = matchBPM;
     this.fromDeckName = fromDeckName;
+    this.isComplete = false;
+    this.matchedBpm = false;
   }
   apply(): void {}
 
   tick() {
-    console.log("Tick!");
+    if (this.isComplete) {
+      // do nothing
+      return;
+    }
 
     // 3 cases before transiton start
     if (this.fromDeckElement.currentTime < this.transition.transition_start) {
-      console.log("do nothing");
       // do nothing or maybe make sure b element is silent
       if (!this.toDeckElement.paused) {
         this.toDeckElement.pause();
-        if (this.toDeckElement.currentTime !== 0) {
-          this.toDeckElement.currentTime = 0;
-        }
+      }
+      if (this.toDeckElement.currentTime !== 0) {
+        this.toDeckElement.currentTime = 0;
+      }
+
+      // secretly boost or lower bpm back to original song level
+
+      if (this.fromDeckElement.playbackRate < 1.0) {
+        const nextBpm = Math.min(
+          (this.fromDeckElement.playbackRate + MAGIC_BPM_DELTA_UNIT) *
+            this.fromDeckTrack.bpm,
+          this.fromDeckTrack.bpm
+        );
+        this.set(setDeckBpmAtom, {
+          deck: this.fromDeckName,
+          bpm: nextBpm
+        });
+      } else if (this.fromDeckElement.playbackRate > 1.0) {
+        const nextBpm = Math.max(
+          (this.fromDeckElement.playbackRate - MAGIC_BPM_DELTA_UNIT) *
+            this.fromDeckTrack.bpm,
+          this.fromDeckTrack.bpm
+        );
+        this.set(setDeckBpmAtom, {
+          deck: this.fromDeckName,
+          bpm: nextBpm
+        });
       }
     }
     // Past transtion duration
     else if (
-      this.fromDeckElement.currentTime >
+      this.fromDeckElement.currentTime >=
       this.transition.transition_start + this.transition.transition_duration
     ) {
-      if (!this.fromDeckElement.paused) {
-        this.fromDeckElement.pause();
-        if (
-          this.fromDeckElement.currentTime !== this.fromDeckElement.duration
-        ) {
-          this.fromDeckElement.currentTime = this.fromDeckElement.duration;
-        }
+      if (!this.isComplete) {
+        this.isComplete = true;
       }
       console.log("FROM TRACK SHOULD BE DONE");
     }
@@ -357,26 +536,48 @@ class CrossfadeStrategy implements TransitionStrategy {
         this.transition.transition_start + this.transition.transition_duration
     ) {
       // match bpm
-      if (
-        this.matchBPM &&
-        this.matchBPM.adjustedPlaybackRateFrom !==
-          this.fromDeckElement.playbackRate &&
-        this.matchBPM.adjustedPlaybackRateTo !==
-          this.fromDeckElement.playbackRate
-      ) {
-        this.fromDeckElement.playbackRate =
-          this.matchBPM.adjustedPlaybackRateFrom;
-        this.toDeckElement.playbackRate = this.matchBPM.adjustedPlaybackRateTo;
+      // if (
+      //   this.matchBPM &&
+      //   this.matchBPM.adjustedPlaybackRateFrom !==
+      //     this.fromDeckElement.playbackRate &&
+      //   this.matchBPM.adjustedPlaybackRateTo !==
+      //     this.fromDeckElement.playbackRate
+      // ) {
+      //   this.fromDeckElement.playbackRate =
+      //     this.matchBPM.adjustedPlaybackRateFrom;
+      //   this.toDeckElement.playbackRate = this.matchBPM.adjustedPlaybackRateTo;
+      // }
+      if (!this.matchedBpm) {
+        console.log("SETTING BPM");
+        this.set(setDeckBpmAtom, {
+          deck: this.fromDeckName === "deckA" ? "deckB" : "deckA",
+          bpm: this.fromDeckTrack.bpm
+        });
+        this.matchedBpm = true;
       }
 
-      const transtionPosition =
+      let transitionPosition =
         this.fromDeckElement.currentTime - this.transition.transition_start;
+
+      // if a transition actually goes PAST the end time of the from deck's track...
+      if (this.fromDeckElement.paused) {
+        const leftoverAmount =
+          this.transition.transition_start +
+          this.transition.transition_duration -
+          this.fromDeckElement.duration;
+        transitionPosition = Math.min(
+          this.toDeckElement.currentTime -
+            (this.toDeckTrack.mix_in_point ?? 0) -
+            leftoverAmount,
+          this.transition.transition_duration
+        );
+      }
 
       // This is potentially a little brittle and maybe timing won't sound right..
       if (this.toDeckElement.paused) {
         console.log("WAS PAUSED NOW STARTING LOL", this.fromDeckName);
         const mixInPoint = this.toDeckTrack.mix_in_point ?? 0;
-        const offset = mixInPoint + transtionPosition;
+        const offset = mixInPoint + transitionPosition;
         this.set(playDeckAtom, {
           deck: this.fromDeckName === "deckA" ? "deckB" : "deckA",
           offset
@@ -385,13 +586,149 @@ class CrossfadeStrategy implements TransitionStrategy {
 
       // percent of transition completed
       const crossfadeAmount =
-        transtionPosition / this.transition.transition_duration;
-      this.set(setCrossfaderAtom, crossfadeAmount);
-      console.log("WITHIN TRANSITION", transtionPosition, crossfadeAmount);
+        transitionPosition / this.transition.transition_duration;
+
+      if (this.fromDeckName === "deckA") {
+        this.set(setCrossfaderAtom, crossfadeAmount);
+      } else {
+        this.set(setCrossfaderAtom, 1 - crossfadeAmount);
+      }
+      if (transitionPosition >= this.transition.transition_duration) {
+        this.isComplete = true;
+      }
+      // this is horrible maybe but if a transition will go PAST the end of a song...
+
+      console.log("WITHIN TRANSITION", transitionPosition, crossfadeAmount);
     } else {
       console.log("hmm i think this shouldn't happen");
     }
   }
 }
 
-export type CurrentSupportedTransitons = CrossfadeStrategy;
+export type CurrentSupportedTransitons = CrossfadeStrategy | QuickCutStrategy;
+
+class QuickCutStrategy implements TransitionStrategy {
+  get: Getter;
+  set: Setter;
+  technique: "quick_cut";
+  transition: Transition;
+  fromDeckTrack: Track;
+  toDeckTrack: Track;
+  fromDeckTrackId: string;
+  toDeckTrackId: string;
+  fromDeckElement: HTMLAudioElement;
+  toDeckElement: HTMLAudioElement;
+  fromDeckName: "deckA" | "deckB";
+  matchBPM:
+    | {
+        adjustedPlaybackRateFrom: number;
+        adjustedPlaybackRateTo: number;
+      }
+    | undefined;
+  isComplete: boolean;
+  hasCut: boolean;
+
+  constructor(
+    get: Getter,
+    set: Setter,
+    technique: "quick_cut",
+    transition: Transition,
+    fromDeckTrack: Track,
+    toDeckTrack: Track,
+    fromDeckTrackId: string,
+    toDeckTrackId: string,
+    fromDeckElement: HTMLAudioElement,
+    toDeckElement: HTMLAudioElement,
+    fromDeckName: "deckA" | "deckB",
+    matchBPM?: {
+      adjustedPlaybackRateFrom: number;
+      adjustedPlaybackRateTo: number;
+    }
+  ) {
+    this.get = get;
+    this.set = set;
+    this.technique = technique;
+    this.transition = transition;
+    this.fromDeckElement = fromDeckElement;
+    this.toDeckElement = toDeckElement;
+    this.fromDeckTrackId = fromDeckTrackId;
+    this.toDeckTrackId = toDeckTrackId;
+    this.fromDeckTrack = fromDeckTrack;
+    this.toDeckTrack = toDeckTrack;
+    this.matchBPM = matchBPM;
+    this.fromDeckName = fromDeckName;
+    this.isComplete = false;
+    this.hasCut = false;
+  }
+
+  apply(): void {}
+
+  tick() {
+    if (this.isComplete) {
+      return;
+    }
+
+    // Before transition start - keep preparing
+    if (this.fromDeckElement.currentTime < this.transition.transition_start) {
+      // Ensure the to-deck is paused and ready
+      if (!this.toDeckElement.paused) {
+        this.toDeckElement.pause();
+      }
+      if (this.toDeckElement.currentTime !== 0) {
+        this.toDeckElement.currentTime = 0;
+      }
+
+      // For quick cuts, we don't need to adjust BPM beforehand
+      // Just let the from track play at its current rate
+      return;
+    }
+
+    // At or after transition start - execute the quick cut
+    if (
+      !this.hasCut &&
+      this.fromDeckElement.currentTime >= this.transition.transition_start
+    ) {
+      console.log("EXECUTING QUICK CUT");
+
+      // Quick cut: immediately start the next track and set crossfader
+      const mixInPoint = this.toDeckTrack.mix_in_point ?? 0;
+
+      // Start the to-deck immediately
+      this.set(playDeckAtom, {
+        deck: this.fromDeckName === "deckA" ? "deckB" : "deckA",
+        offset: mixInPoint
+      });
+
+      // Set crossfader to fully switch to the new track
+      // For quick cut, we want an immediate switch
+      if (this.fromDeckName === "deckA") {
+        this.set(setCrossfaderAtom, 1.0); // Full to deck B
+      } else {
+        this.set(setCrossfaderAtom, 0.0); // Full to deck A
+      }
+
+      // Pause the from deck after a very brief moment to avoid audio glitch
+      setTimeout(() => {
+        this.set(pauseDeckAtom, this.fromDeckName);
+      }, 50); // 50ms delay to avoid immediate audio cutting
+
+      this.hasCut = true;
+
+      // For quick cuts, mark as complete almost immediately
+      // Use a short duration to allow for any audio settling
+      setTimeout(() => {
+        this.isComplete = true;
+        console.log("QUICK CUT COMPLETE");
+      }, Math.min(this.transition.transition_duration * 1000, 500)); // Max 500ms
+
+      return;
+    }
+
+    // After cut is executed, just wait for completion
+    if (this.hasCut && !this.isComplete) {
+      // Quick cut should be complete very quickly
+      // This is handled by the setTimeout above
+      return;
+    }
+  }
+}
