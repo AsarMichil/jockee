@@ -47,6 +47,7 @@ import {
   stopAutoDJAtom,
   djStateAtom
 } from "@/lib/dj-agent";
+import AutoDJGuy from "./AutoDJGuy";
 
 const formatTime = (seconds: number) => {
   const mins = Math.floor(seconds / 60);
@@ -85,7 +86,9 @@ export default function Player({ data }: { data: Promise<AnalysisJob> }) {
       setQueuedTracks(job.tracks);
       // Load mix instructions into DJ agent
       if (job.mix_instructions) {
-        loadMix({ mix_instructions: job.mix_instructions } as JobResultResponse);
+        loadMix({
+          mix_instructions: job.mix_instructions
+        } as JobResultResponse);
       }
     }
   }, [job.tracks, job.mix_instructions, setQueuedTracks, loadMix]);
@@ -327,6 +330,7 @@ export default function Player({ data }: { data: Promise<AnalysisJob> }) {
                       ? "Stop Auto DJ"
                       : "Start Auto DJ"}
                   </Button>
+                  <AutoDJGuy isPlaying={djState.status === "playing"} />
 
                   {djState.status !== "no_mix_loaded" && (
                     <div className="text-xs text-gray-600 space-y-1">
