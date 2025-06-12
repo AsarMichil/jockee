@@ -307,7 +307,7 @@ export default function Player({ data }: { data: Promise<AnalysisJob> }) {
                   </h3>
                   <TrackProgress
                     mixInstructions={job.mix_instructions}
-                    currentTime={djState.elapsed_time || 0}
+                    currentTime={0}
                     className="bg-gray-800 text-white"
                   />
                 </div>
@@ -337,11 +337,6 @@ export default function Player({ data }: { data: Promise<AnalysisJob> }) {
                       <div>Status: {djState.status}</div>
                       {djState.current_track && (
                         <div>Now Playing: {djState.current_track.title}</div>
-                      )}
-                      {djState.progress !== undefined && (
-                        <div>
-                          Progress: {Math.round(djState.progress * 100)}%
-                        </div>
                       )}
                     </div>
                   )}
