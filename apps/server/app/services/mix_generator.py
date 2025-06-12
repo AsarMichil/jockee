@@ -1,10 +1,12 @@
 import logging
 from typing import List, Dict, Any, Optional, Tuple
-from app.models.track import Track
+from app.models.track import Track, FileSource
 from app.models.job import MixTransition
 from app.services.audio_analysis import AudioAnalyzer
 import uuid
 from enum import Enum
+from pathlib import Path
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +50,7 @@ class MixGenerator:
         self.min_compatibility_score = 0.3  # Minimum score for a valid transition
         self.default_crossfade_duration = 16.0  # seconds
 
-    def generate_mix_options(self, tracks: List[Track], job_id: uuid.UUID) -> Dict[str, Any]:
+    async def generate_mix_options(self, tracks: List[Track], job_id: uuid.UUID) -> Dict[str, Any]:
         """
         Generate multiple mix options for a list of tracks.
 
@@ -72,7 +74,7 @@ class MixGenerator:
             analyzable_tracks = [
                 track
                 for track in tracks
-                if track.bpm is not None and track.file_path is not None
+                if track.bpm is not None
             ]
 
             if len(analyzable_tracks) < 2:
@@ -87,7 +89,7 @@ class MixGenerator:
                 }
 
             # Enhance track data with style analysis if file paths are available
-            enhanced_tracks = self._enhance_tracks_with_style_analysis(analyzable_tracks)
+            enhanced_tracks = await self._enhance_tracks_with_style_analysis(analyzable_tracks)
 
             # Generate different ordering strategies
             mix_options = []
@@ -155,13 +157,13 @@ class MixGenerator:
                 "metadata": {},
             }
 
-    def generate_mix(self, tracks: List[Track], job_id: uuid.UUID) -> Dict[str, Any]:
+    async def generate_mix(self, tracks: List[Track], job_id: uuid.UUID) -> Dict[str, Any]:
         """
         Generate a single mix (backward compatibility).
         Returns the best mix option.
         """
         try:
-            mix_options = self.generate_mix_options(tracks, job_id)
+            mix_options = await self.generate_mix_options(tracks, job_id)
             
             if mix_options.get("error"):
                 return {
@@ -185,18 +187,26 @@ class MixGenerator:
             
             # Get the actual MixOption object (not the dict version)
             # We need to regenerate the default option to get the MixTransition objects
-            enhanced_tracks = self._enhance_tracks_with_style_analysis([
+            # Filter tracks that have audio files (S3, local, or YouTube) and BPM data
+            usable_tracks = [
                 track for track in tracks
-                if track.bpm is not None and track.file_path is not None
-            ])
+                if track.bpm is not None and (
+                    (track.file_source == FileSource.S3 and track.s3_object_key) or
+                    (track.file_path and Path(track.file_path).exists()) or
+                    (track.file_source == FileSource.YOUTUBE and track.spotify_id)
+                )
+            ]
             
-            if not enhanced_tracks:
+            if not usable_tracks:
                 return {
                     "error": "No tracks with required data for mix generation",
                     "transitions": [],
                     "total_duration": 0,
                     "metadata": {},
                 }
+            
+            # Enhance tracks with style analysis
+            enhanced_tracks = await self._enhance_tracks_with_style_analysis(usable_tracks)
             
             # Generate the BPM progression option (default/most reliable)
             bpm_ordered = self._order_by_strategy(enhanced_tracks, MixStrategy.BPM_PROGRESSION)
@@ -229,34 +239,67 @@ class MixGenerator:
                 "metadata": {},
             }
 
-    def _enhance_tracks_with_style_analysis(self, tracks: List[Track]) -> List[Track]:
+    async def _enhance_tracks_with_style_analysis(self, tracks: List[Track]) -> List[Track]:
         """Enhance tracks with style analysis data."""
         enhanced_tracks = []
         
         for track in tracks:
-            if track.file_path:
+            # Check if track has audio file (S3, local, or YouTube)
+            has_s3_file = track.file_source == FileSource.S3 and track.s3_object_key
+            has_local_file = track.file_path and Path(track.file_path).exists()
+            has_youtube_file = track.file_source == FileSource.YOUTUBE and track.spotify_id
+            
+            if has_s3_file or has_local_file or has_youtube_file:
                 try:
-                    # Get style analysis
-                    style_data = self.analyzer.analyze_track_style(track.file_path)
+                    if has_s3_file:
+                        # Use S3 methods for CloudFront files
+                        style_data = await self.analyzer.analyze_track_style_s3(track.s3_object_key)
+                        mix_points = await self.analyzer.find_mix_points_s3(
+                            track.s3_object_key,
+                            track.duration or 180.0  # Use track duration or default
+                        )
+                    elif has_local_file:
+                        # Use existing local file methods
+                        style_data = self.analyzer.analyze_track_style(track.file_path)
+                        mix_points = self.analyzer.find_mix_points(
+                            track.file_path,
+                            track.duration or 180.0  # Use track duration or default
+                        )
+                    else:  # YouTube file
+                        # For YouTube tracks, skip additional analysis if already done
+                        # The track should already have the necessary analysis data
+                        style_data = {
+                            "dominant_style": track.dominant_style,
+                            "style_scores": track.style_scores or {},
+                            "style_confidence": track.style_confidence or 0.0
+                        }
+                        mix_points = {
+                            "mix_in_point": track.mix_in_point,
+                            "mix_out_point": track.mix_out_point,
+                            "mixable_sections": track.mixable_sections or [],
+                        }
                     
-                    # Get enhanced mix points
-                    mix_points = self.analyzer.find_mix_points(
-                        track.file_path, 
-                        track.duration or 180.0,  # Default duration if unknown
-                        self._track_to_dict(track)
-                    )
+                    # Update track with enhanced data if we got new analysis
+                    if style_data and style_data.get("dominant_style"):
+                        track.dominant_style = style_data["dominant_style"]
+                        track.style_scores = style_data.get("style_scores")
+                        track.style_confidence = style_data.get("style_confidence")
                     
-                    # Store additional data in track (could be added to model later)
-                    track._style_data = style_data
-                    track._mix_points = mix_points
+                    if mix_points and mix_points.get("mix_in_point") is not None:
+                        track.mix_in_point = mix_points["mix_in_point"]
+                        track.mix_out_point = mix_points["mix_out_point"]
+                        track.mixable_sections = mix_points.get("mixable_sections")
+                    
+                    enhanced_tracks.append(track)
                     
                 except Exception as e:
-                    logger.warning(f"Could not enhance track {track.title}: {e}")
-                    track._style_data = None
-                    track._mix_points = None
-            
-            enhanced_tracks.append(track)
-            
+                    logger.warning(f"Failed to enhance track {track.title} with style analysis: {e}")
+                    # Still add the track even if enhancement fails
+                    enhanced_tracks.append(track)
+            else:
+                logger.info(f"Skipping track {track.title} - no accessible audio file")
+        
+        logger.info(f"Enhanced {len(enhanced_tracks)} out of {len(tracks)} tracks with style analysis")
         return enhanced_tracks
 
     def _order_by_strategy(self, tracks: List[Track], strategy: MixStrategy) -> List[Track]:

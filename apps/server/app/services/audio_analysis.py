@@ -1007,6 +1007,90 @@ class AudioAnalyzer:
         except Exception:
             return 0.0
 
+    async def analyze_track_style_s3(self, s3_object_key: str) -> Dict[str, Any]:
+        """Analyze track style for S3-stored files by downloading temporarily."""
+        temp_file_path = None
+        try:
+            # Create temporary file
+            temp_dir = Path(tempfile.mkdtemp())
+            temp_file_path = temp_dir / "temp_audio.mp3"
+            
+            # Download file from CloudFront to temp location
+            cloudfront_url = self.s3_storage.generate_cloudfront_url(s3_object_key)
+            await self._download_file_from_url(cloudfront_url, str(temp_file_path))
+            
+            if not temp_file_path.exists() or temp_file_path.stat().st_size == 0:
+                logger.warning(f"Failed to download file for style analysis: {s3_object_key}")
+                return {
+                    "dominant_style": "unknown",
+                    "style_scores": {},
+                    "style_confidence": 0.0
+                }
+
+            # Run style analysis in executor to avoid blocking
+            loop = asyncio.get_event_loop()
+            style_data = await loop.run_in_executor(
+                None, self.analyze_track_style, str(temp_file_path)
+            )
+
+            return style_data
+
+        except Exception as e:
+            logger.warning(f"S3 style analysis failed for {s3_object_key}: {e}")
+            return {
+                "dominant_style": "unknown",
+                "style_scores": {},
+                "style_confidence": 0.0
+            }
+        finally:
+            # Clean up temporary files
+            if temp_file_path and temp_file_path.parent.exists():
+                try:
+                    shutil.rmtree(temp_file_path.parent)
+                except Exception as e:
+                    logger.warning(f"Failed to clean up temp directory: {e}")
+
+    async def find_mix_points_s3(self, s3_object_key: str, duration: float, analysis_data: Dict[str, Any] = None) -> Dict[str, float]:
+        """Find mix points for S3-stored files by downloading temporarily."""
+        temp_file_path = None
+        try:
+            # Create temporary file
+            temp_dir = Path(tempfile.mkdtemp())
+            temp_file_path = temp_dir / "temp_audio.mp3"
+            
+            # Download file from CloudFront to temp location
+            cloudfront_url = self.s3_storage.generate_cloudfront_url(s3_object_key)
+            await self._download_file_from_url(cloudfront_url, str(temp_file_path))
+            
+            if not temp_file_path.exists() or temp_file_path.stat().st_size == 0:
+                logger.warning(f"Failed to download file for mix points analysis: {s3_object_key}")
+                return {
+                    "mix_in_point": 16.0,
+                    "mix_out_point": max(16.0, duration - 32.0)
+                }
+
+            # Run mix points analysis in executor to avoid blocking
+            loop = asyncio.get_event_loop()
+            mix_points = await loop.run_in_executor(
+                None, self.find_mix_points, str(temp_file_path), duration, analysis_data
+            )
+
+            return mix_points
+
+        except Exception as e:
+            logger.warning(f"S3 mix points analysis failed for {s3_object_key}: {e}")
+            return {
+                "mix_in_point": 16.0,
+                "mix_out_point": max(16.0, duration - 32.0)
+            }
+        finally:
+            # Clean up temporary files
+            if temp_file_path and temp_file_path.parent.exists():
+                try:
+                    shutil.rmtree(temp_file_path.parent)
+                except Exception as e:
+                    logger.warning(f"Failed to clean up temp directory: {e}")
+
     def analyze_track_style(self, file_path: str) -> Dict[str, Any]:
         """Analyze track style in a genre-agnostic way for better mixing compatibility."""
         try:

@@ -150,7 +150,7 @@ async def _analyze_playlist_async(task, job_id: str, spotify_access_token: str):
         # Generate mix instructions
         if len(processed_tracks) >= 2:
             logger.info("Generating mix instructions")
-            mix_result = mix_generator.generate_mix(processed_tracks, job.id)
+            mix_result = await mix_generator.generate_mix(processed_tracks, job.id)
 
             if "error" not in mix_result:
                 # Save transitions to database - they are already MixTransition objects

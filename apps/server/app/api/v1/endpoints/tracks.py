@@ -45,7 +45,7 @@ async def stream_track_audio(
             return RedirectResponse(url=cloudfront_url, status_code=302)
         
         # Handle local files (backward compatibility)
-        if track.file_source == FileSource.LOCAL or track.file_source == FileSource.YOUTUBE and track.file_path:
+        if (track.file_source == FileSource.LOCAL or track.file_source == FileSource.YOUTUBE) and track.file_path:
             file_path = Path(track.file_path)
             if not file_path.exists():
                 logger.error(f"Audio file not found on disk: {track.file_path}")
@@ -358,7 +358,7 @@ async def get_track_audio_url(
             }
         
         # Handle local files (backward compatibility)
-        if track.file_source == FileSource.LOCAL and track.file_path:
+        if (track.file_source == FileSource.LOCAL or track.file_source == FileSource.YOUTUBE) and track.file_path:
             file_path = Path(track.file_path)
             if not file_path.exists():
                 logger.error(f"Audio file not found on disk: {track.file_path}")
