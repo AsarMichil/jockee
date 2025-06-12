@@ -127,9 +127,22 @@ async def startup_event():
     logger.info(f"Environment: {settings.ENVIRONMENT}")
     logger.info(f"Debug mode: {settings.DEBUG}")
 
+    # Run database migrations on startup (for free tier without pre-deploy)
+    try:
+        from alembic.config import Config
+        from alembic import command
+        
+        logger.info("Running database migrations...")
+        alembic_cfg = Config("alembic.ini")
+        command.upgrade(alembic_cfg, "head")
+        logger.info("Database migrations completed successfully")
+    except Exception as e:
+        logger.error(f"Database migration failed: {e}")
+        # Don't fail startup if migrations fail - let health check handle DB issues
+        pass
+
     # Create audio storage directory if possible
     import os
-
     try:
         os.makedirs(settings.AUDIO_STORAGE_PATH, exist_ok=True)
         logger.info(f"Audio storage path: {settings.AUDIO_STORAGE_PATH}")
