@@ -7,9 +7,10 @@ from app.db.base import Base
 
 
 class FileSource(str, enum.Enum):
-    LOCAL = "local"
-    YOUTUBE = "youtube"
-    UNAVAILABLE = "unavailable"
+    LOCAL = "LOCAL"
+    YOUTUBE = "YOUTUBE"
+    S3 = "S3"
+    UNAVAILABLE = "UNAVAILABLE"
 
 
 class Track(Base):
@@ -26,7 +27,8 @@ class Track(Base):
     preview_url = Column(String)
 
     # File information
-    file_path = Column(String)
+    file_path = Column(String)  # Deprecated: kept for backward compatibility
+    s3_object_key = Column(String)  # S3 object key for cloud storage
     file_source = Column(Enum(FileSource), default=FileSource.UNAVAILABLE)
     file_size = Column(Float)  # File size in bytes
 

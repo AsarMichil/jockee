@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException, Depends, Request
-from fastapi.responses import StreamingResponse, FileResponse
+from fastapi.responses import StreamingResponse, FileResponse, RedirectResponse
 from sqlalchemy.orm import Session
 from typing import List, Optional
 import os
@@ -10,11 +10,13 @@ from app.models.track import Track, FileSource
 from app.schemas.track import Track as TrackSchema, TrackSummary
 from app.api.v1.dependencies import get_spotify_client
 from app.core.spotify import SpotifyClient
+from app.services.s3_storage import S3StorageService
 import logging
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+s3_storage = S3StorageService()
 
 
 @router.get("/{track_id}/audio")
@@ -24,7 +26,8 @@ async def stream_track_audio(
     db: Session = Depends(get_db),
 ):
     """
-    Stream audio file for a track with range request support.
+    Stream audio file for a track. For S3-stored files, redirects to CloudFront.
+    For local files, provides direct streaming with range request support.
     Note: This endpoint doesn't require authentication for streaming,
     but getting the URL requires authentication via the /audio/url endpoint.
     """
@@ -35,85 +38,92 @@ async def stream_track_audio(
         if not track:
             raise HTTPException(status_code=404, detail="Track not found")
         
-        if not track.file_path or track.file_source == FileSource.UNAVAILABLE:
-            raise HTTPException(status_code=404, detail="Audio file not available for this track")
+        # Handle S3-stored files
+        if track.file_source == FileSource.S3 and track.s3_object_key:
+            # Redirect to CloudFront URL for S3 files
+            cloudfront_url = s3_storage.generate_cloudfront_url(track.s3_object_key)
+            return RedirectResponse(url=cloudfront_url, status_code=302)
         
-        # Check if file exists on disk
-        file_path = Path(track.file_path)
-        if not file_path.exists():
-            logger.error(f"Audio file not found on disk: {track.file_path}")
-            raise HTTPException(status_code=404, detail="Audio file not found on disk")
+        # Handle local files (backward compatibility)
+        if track.file_source == FileSource.LOCAL or track.file_source == FileSource.YOUTUBE and track.file_path:
+            file_path = Path(track.file_path)
+            if not file_path.exists():
+                logger.error(f"Audio file not found on disk: {track.file_path}")
+                raise HTTPException(status_code=404, detail="Audio file not found on disk")
+            
+            # Get file info
+            file_size = file_path.stat().st_size
+            content_type = mimetypes.guess_type(str(file_path))[0] or "audio/mpeg"
+            
+            # Handle range requests for streaming
+            range_header = request.headers.get("range")
+            
+            if range_header:
+                # Parse range header (e.g., "bytes=0-1023")
+                try:
+                    range_match = range_header.replace("bytes=", "").split("-")
+                    start = int(range_match[0]) if range_match[0] else 0
+                    end = int(range_match[1]) if range_match[1] else file_size - 1
+                    
+                    # Ensure valid range
+                    start = max(0, start)
+                    end = min(file_size - 1, end)
+                    content_length = end - start + 1
+                    
+                    def generate_chunk():
+                        with open(file_path, "rb") as f:
+                            f.seek(start)
+                            remaining = content_length
+                            while remaining > 0:
+                                chunk_size = min(8192, remaining)  # 8KB chunks
+                                chunk = f.read(chunk_size)
+                                if not chunk:
+                                    break
+                                remaining -= len(chunk)
+                                yield chunk
+                    
+                    headers = {
+                        "Content-Range": f"bytes {start}-{end}/{file_size}",
+                        "Accept-Ranges": "bytes",
+                        "Content-Length": str(content_length),
+                        "Content-Type": content_type,
+                        "Cache-Control": "public, max-age=3600",
+                        "Access-Control-Allow-Origin": "*",
+                        "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
+                        "Access-Control-Allow-Headers": "Range, Content-Type",
+                    }
+                    
+                    return StreamingResponse(
+                        generate_chunk(),
+                        status_code=206,  # Partial Content
+                        headers=headers,
+                        media_type=content_type
+                    )
+                    
+                except (ValueError, IndexError) as e:
+                    logger.error(f"Invalid range header: {range_header}, error: {e}")
+                    # Fall through to serve full file
+            
+            # Serve full file if no range request or invalid range
+            headers = {
+                "Content-Length": str(file_size),
+                "Content-Type": content_type,
+                "Accept-Ranges": "bytes",
+                "Cache-Control": "public, max-age=3600",
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
+                "Access-Control-Allow-Headers": "Range, Content-Type",
+            }
+            
+            return FileResponse(
+                path=file_path,
+                headers=headers,
+                media_type=content_type,
+                filename=f"{track.artist} - {track.title}.mp3"
+            )
         
-        # Get file info
-        file_size = file_path.stat().st_size
-        content_type = mimetypes.guess_type(str(file_path))[0] or "audio/mpeg"
-        
-        # Handle range requests for streaming
-        range_header = request.headers.get("range")
-        
-        if range_header:
-            # Parse range header (e.g., "bytes=0-1023")
-            try:
-                range_match = range_header.replace("bytes=", "").split("-")
-                start = int(range_match[0]) if range_match[0] else 0
-                end = int(range_match[1]) if range_match[1] else file_size - 1
-                
-                # Ensure valid range
-                start = max(0, start)
-                end = min(file_size - 1, end)
-                content_length = end - start + 1
-                
-                def generate_chunk():
-                    with open(file_path, "rb") as f:
-                        f.seek(start)
-                        remaining = content_length
-                        while remaining > 0:
-                            chunk_size = min(8192, remaining)  # 8KB chunks
-                            chunk = f.read(chunk_size)
-                            if not chunk:
-                                break
-                            remaining -= len(chunk)
-                            yield chunk
-                
-                headers = {
-                    "Content-Range": f"bytes {start}-{end}/{file_size}",
-                    "Accept-Ranges": "bytes",
-                    "Content-Length": str(content_length),
-                    "Content-Type": content_type,
-                    "Cache-Control": "public, max-age=3600",
-                    "Access-Control-Allow-Origin": "*",
-                    "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
-                    "Access-Control-Allow-Headers": "Range, Content-Type",
-                }
-                
-                return StreamingResponse(
-                    generate_chunk(),
-                    status_code=206,  # Partial Content
-                    headers=headers,
-                    media_type=content_type
-                )
-                
-            except (ValueError, IndexError) as e:
-                logger.error(f"Invalid range header: {range_header}, error: {e}")
-                # Fall through to serve full file
-        
-        # Serve full file if no range request or invalid range
-        headers = {
-            "Content-Length": str(file_size),
-            "Content-Type": content_type,
-            "Accept-Ranges": "bytes",
-            "Cache-Control": "public, max-age=3600",
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
-            "Access-Control-Allow-Headers": "Range, Content-Type",
-        }
-        
-        return FileResponse(
-            path=file_path,
-            headers=headers,
-            media_type=content_type,
-            filename=f"{track.artist} - {track.title}.mp3"
-        )
+        # No valid file source
+        raise HTTPException(status_code=404, detail="Audio file not available for this track")
         
     except HTTPException:
         raise
@@ -327,6 +337,8 @@ async def get_track_audio_url(
     """
     Get the streaming URL for a track's audio file.
     This endpoint returns the URL that can be used to stream the audio.
+    For S3 files, returns the CloudFront URL directly.
+    For local files, returns the streaming endpoint URL.
     """
     try:
         # Get track from database
@@ -335,20 +347,35 @@ async def get_track_audio_url(
         if not track:
             raise HTTPException(status_code=404, detail="Track not found")
         
-        if not track.file_path or track.file_source == FileSource.UNAVAILABLE:
-            raise HTTPException(status_code=404, detail="Audio file not available for this track")
+        # Handle S3-stored files
+        if track.file_source == FileSource.S3 and track.s3_object_key:
+            # Return CloudFront URL directly for S3 files
+            cloudfront_url = s3_storage.generate_cloudfront_url(track.s3_object_key)
+            return {
+                "url": cloudfront_url,
+                "source": "s3",
+                "cache_control": "public, max-age=31536000"
+            }
         
-        # Check if file exists on disk
-        file_path = Path(track.file_path)
-        if not file_path.exists():
-            logger.error(f"Audio file not found on disk: {track.file_path}")
-            raise HTTPException(status_code=404, detail="Audio file not found on disk")
+        # Handle local files (backward compatibility)
+        if track.file_source == FileSource.LOCAL and track.file_path:
+            file_path = Path(track.file_path)
+            if not file_path.exists():
+                logger.error(f"Audio file not found on disk: {track.file_path}")
+                raise HTTPException(status_code=404, detail="Audio file not found on disk")
+            
+            # Return the streaming URL for local files
+            base_url = str(request.base_url).rstrip('/')
+            audio_url = f"{base_url}/api/v1/tracks/{track_id}/audio"
+            
+            return {
+                "url": audio_url,
+                "source": "local",
+                "cache_control": "public, max-age=3600"
+            }
         
-        # Return the streaming URL
-        base_url = str(request.base_url).rstrip('/')
-        audio_url = f"{base_url}/api/v1/tracks/{track_id}/audio"
-        
-        return {"url": audio_url}
+        # No valid file source
+        raise HTTPException(status_code=404, detail="Audio file not available for this track")
         
     except HTTPException:
         raise

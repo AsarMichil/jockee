@@ -35,7 +35,14 @@ class Settings(BaseSettings):
     SPOTIFY_CLIENT_SECRET: str
     SPOTIFY_REDIRECT_URI: str
 
-    # Audio Storage
+    # AWS S3 Configuration
+    AWS_ACCESS_KEY_ID: str
+    AWS_SECRET_ACCESS_KEY: str
+    AWS_REGION: str = "us-east-1"
+    S3_BUCKET_NAME: str
+    CLOUDFRONT_DOMAIN: str  # e.g., "d123456abcdef8.cloudfront.net"
+    
+    # Audio Storage (deprecated, but kept for migration compatibility)
     AUDIO_STORAGE_PATH: str = "./audio"
     MAX_AUDIO_CACHE_GB: int = 50
 

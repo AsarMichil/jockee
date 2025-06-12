@@ -120,7 +120,7 @@ async def _analyze_playlist_async(task, job_id: str, spotify_access_token: str):
                     job.analyzed_tracks = len(processed_tracks)
 
                     # Count downloaded tracks
-                    if track.file_source == FileSource.YOUTUBE:
+                    if track.file_source in [FileSource.YOUTUBE, FileSource.S3]:
                         job.downloaded_tracks += 1
                     elif track.file_source == FileSource.UNAVAILABLE:
                         job.failed_tracks += 1
@@ -129,8 +129,20 @@ async def _analyze_playlist_async(task, job_id: str, spotify_access_token: str):
 
             except Exception as e:
                 logger.error(f"Error processing track {spotify_track['title']}: {e}")
-                job.failed_tracks += 1
-                db.commit()
+                try:
+                    # Rollback the current transaction to clear any pending errors
+                    db.rollback()
+                    job.failed_tracks += 1
+                    db.commit()
+                except Exception as rollback_error:
+                    logger.error(f"Error during rollback: {rollback_error}")
+                    # Force a new transaction by closing and reopening the session
+                    db.close()
+                    db = get_db_session()
+                    job = db.query(AnalysisJob).filter(AnalysisJob.id == job_id).first()
+                    if job:
+                        job.failed_tracks += 1
+                        db.commit()
                 continue
 
         logger.info(f"Processed {len(processed_tracks)} tracks successfully")
@@ -182,11 +194,16 @@ async def _analyze_playlist_async(task, job_id: str, spotify_access_token: str):
         logger.error(f"Error in playlist analysis task: {e}")
 
         # Update job with error
-        if "job" in locals():
-            job.status = JobStatus.FAILED
-            job.error_message = str(e)
-            job.completed_at = datetime.utcnow()
-            db.commit()
+        if "job" in locals() and "db" in locals():
+            try:
+                # Try to rollback any pending transaction
+                db.rollback()
+                job.status = JobStatus.FAILED
+                job.error_message = str(e)
+                job.completed_at = datetime.utcnow()
+                db.commit()
+            except Exception as error_update_exception:
+                logger.error(f"Failed to update job with error status: {error_update_exception}")
 
         raise
 
@@ -228,14 +245,27 @@ async def process_single_track(
         db.flush()  # Get the ID
 
     # Fetch audio file if not already available
-    if not track.file_path or track.file_source == FileSource.UNAVAILABLE:
+    needs_fetch = (
+        track.file_source == FileSource.UNAVAILABLE or
+        (track.file_source == FileSource.LOCAL and not track.file_path) or
+        (track.file_source == FileSource.S3 and not track.s3_object_key)
+    )
+    
+    if needs_fetch:
         logger.info(f"Fetching audio for {track.title} by {track.artist}")
 
         fetch_result = await audio_fetcher.fetch_audio(
             track.artist, track.title, track.spotify_id
         )
 
-        if fetch_result["file_path"]:
+        if fetch_result.get("s3_object_key"):
+            # S3 storage
+            track.s3_object_key = fetch_result["s3_object_key"]
+            track.file_source = fetch_result["file_source"]
+            track.file_size = fetch_result["file_size"]
+            track.file_path = None  # Clear old file path if migrating
+        elif fetch_result.get("file_path"):
+            # Local storage (backward compatibility)
             track.file_path = fetch_result["file_path"]
             track.file_source = fetch_result["file_source"]
             track.file_size = fetch_result["file_size"]
@@ -246,12 +276,19 @@ async def process_single_track(
 
     # Analyze audio if we have a file and no analysis yet
     skip_analysis_if_exists = options.get("skip_analysis_if_exists", False)
-    should_analyze = track.file_path and (not track.analyzed_at or not skip_analysis_if_exists)
+    has_audio_file = track.file_path or track.s3_object_key
+    should_analyze = has_audio_file and (not track.analyzed_at or not skip_analysis_if_exists)
     
     if should_analyze:
         logger.info(f"Analyzing audio for {track.title}")
-
-        analysis_result = await audio_analyzer.analyze_track(track.file_path)
+        
+        # Get the file path for analysis
+        if track.s3_object_key:
+            # For S3 files, pass the S3 key - the analyzer will handle downloading
+            analysis_result = await audio_analyzer.analyze_track_s3(track.s3_object_key)
+        else:
+            # For local files, use the file path directly
+            analysis_result = await audio_analyzer.analyze_track(track.file_path)
 
         if not analysis_result.get("analysis_error"):
             # Update track with all analysis results from librosa
@@ -304,7 +341,13 @@ async def process_single_track(
     elif track.analyzed_at and skip_analysis_if_exists:
         logger.info(f"Skipping analysis for {track.title} - already analyzed")
 
-    db.commit()
+    try:
+        db.commit()
+    except Exception as commit_error:
+        logger.error(f"Error committing track changes for {track.title}: {commit_error}")
+        db.rollback()
+        raise
+    
     return track
 
 

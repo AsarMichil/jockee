@@ -5,6 +5,10 @@ from typing import Dict, Any, List, Tuple
 from pathlib import Path
 import asyncio
 from datetime import datetime
+import tempfile
+import shutil
+import httpx
+from app.services.s3_storage import S3StorageService
 
 logger = logging.getLogger(__name__)
 
@@ -15,6 +19,7 @@ class AudioAnalyzer:
     def __init__(self):
         self.sample_rate = 22050  # Standard sample rate for analysis
         self.analysis_version = "2.0.0"  # Updated version to reflect librosa-only analysis
+        self.s3_storage = S3StorageService()
 
     async def analyze_track(self, file_path: str) -> Dict[str, Any]:
         """
@@ -62,6 +67,86 @@ class AudioAnalyzer:
             result["analysis_error"] = error_msg
 
         return result
+
+    async def analyze_track_s3(self, s3_object_key: str) -> Dict[str, Any]:
+        """
+        Analyze an audio track stored in S3 by downloading it temporarily.
+
+        Returns:
+            Dict with analysis results or error information
+        """
+        result = {
+            "bpm": None,
+            "key": None,
+            "energy": None,
+            "danceability": None,
+            "valence": None,
+            "acousticness": None,
+            "instrumentalness": None,
+            "liveness": None,
+            "speechiness": None,
+            "loudness": None,
+            "beat_timestamps": None,
+            "beat_intervals": None,
+            "beat_confidence": None,
+            "analysis_version": self.analysis_version,
+            "analyzed_at": datetime.utcnow(),
+            "analysis_error": None,
+        }
+
+        temp_file_path = None
+        try:
+            # Create temporary file
+            temp_dir = Path(tempfile.mkdtemp())
+            temp_file_path = temp_dir / "temp_audio.mp3"
+            
+            # Download file from CloudFront to temp location
+            cloudfront_url = self.s3_storage.generate_cloudfront_url(s3_object_key)
+            await self._download_file_from_url(cloudfront_url, str(temp_file_path))
+            
+            if not temp_file_path.exists() or temp_file_path.stat().st_size == 0:
+                result["analysis_error"] = f"Failed to download file from CloudFront: {s3_object_key}"
+                return result
+
+            # Run analysis in executor to avoid blocking
+            loop = asyncio.get_event_loop()
+            analysis_data = await loop.run_in_executor(
+                None, self._analyze_audio_file, str(temp_file_path)
+            )
+
+            result.update(analysis_data)
+            logger.info(f"Successfully analyzed S3 audio file via CloudFront: {s3_object_key}")
+
+        except Exception as e:
+            error_msg = f"Error analyzing S3 audio file via CloudFront {s3_object_key}: {str(e)}"
+            logger.error(error_msg)
+            result["analysis_error"] = error_msg
+        finally:
+            # Clean up temporary files
+            if temp_file_path and temp_file_path.parent.exists():
+                try:
+                    shutil.rmtree(temp_file_path.parent)
+                except Exception as e:
+                    logger.warning(f"Failed to clean up temp directory: {e}")
+
+        return result
+
+    async def _download_file_from_url(self, url: str, local_path: str):
+        """Download file from URL (CloudFront) to local path."""
+        try:
+            async with httpx.AsyncClient() as client:
+                # Stream download to handle large files efficiently
+                async with client.stream('GET', url) as response:
+                    response.raise_for_status()
+                    
+                    with open(local_path, 'wb') as f:
+                        async for chunk in response.aiter_bytes(chunk_size=8192):
+                            f.write(chunk)
+                            
+        except httpx.HTTPError as e:
+            raise Exception(f"Failed to download file from CloudFront: {e}")
+        except Exception as e:
+            raise Exception(f"Error downloading file: {e}")
 
     def _analyze_audio_file(self, file_path: str) -> Dict[str, Any]:
         """Perform the actual audio analysis (blocking operation)."""

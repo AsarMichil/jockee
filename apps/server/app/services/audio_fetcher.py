@@ -5,6 +5,7 @@ from pathlib import Path
 import yt_dlp
 from app.core.config import settings
 from app.models.track import FileSource
+from app.services.s3_storage import S3StorageService
 import re
 import time
 import subprocess
@@ -20,6 +21,7 @@ class AudioFetcher:
         self.download_count = 0
         self.last_download_time = 0
         self.rate_limit_delay = 60 / settings.YTDL_MAX_DOWNLOADS_PER_MINUTE
+        self.s3_storage = S3StorageService()
 
     def _sanitize_filename(self, filename: str) -> str:
         """Sanitize filename for filesystem compatibility."""
@@ -64,17 +66,33 @@ class AudioFetcher:
         Fetch audio file for a track.
 
         Returns:
-            Dict with keys: file_path, file_source, file_size, error
+            Dict with keys: file_path, file_source, file_size, error, s3_object_key
         """
         result = {
             "file_path": None,
             "file_source": FileSource.UNAVAILABLE,
             "file_size": None,
+            "s3_object_key": None,
             "error": None,
         }
 
         try:
-            # First check if file exists locally
+            # First check if file exists in S3
+            s3_key = self.s3_storage.generate_s3_key(artist, title)
+            if await self.s3_storage.file_exists(s3_key):
+                file_info = await self.s3_storage.get_file_info(s3_key)
+                if file_info:
+                    result.update(
+                        {
+                            "s3_object_key": s3_key,
+                            "file_source": FileSource.S3,
+                            "file_size": file_info["file_size"],
+                        }
+                    )
+                    logger.info(f"Found S3 file for {artist} - {title}")
+                    return result
+
+            # Then check if file exists locally (for backward compatibility)
             local_path = self._check_local_file(artist, title)
             if local_path:
                 file_size = Path(local_path).stat().st_size
@@ -88,33 +106,38 @@ class AudioFetcher:
                 logger.info(f"Found local file for {artist} - {title}")
                 return result
 
-            # Download from YouTube
-            return await self._download_from_youtube(artist, title, spotify_id)
+            # Download from YouTube and upload to S3
+            return await self._download_and_upload_to_s3(artist, title, spotify_id)
 
         except Exception as e:
             logger.error(f"Error fetching audio for {artist} - {title}: {e}")
             result["error"] = str(e)
             return result
 
-    async def _download_from_youtube(
+    async def _download_and_upload_to_s3(
         self, artist: str, title: str, spotify_id: str
     ) -> Dict[str, Any]:
-        """Download audio from YouTube using yt-dlp."""
+        """Download audio from YouTube using yt-dlp and upload to S3."""
         result = {
             "file_path": None,
             "file_source": FileSource.UNAVAILABLE,
             "file_size": None,
+            "s3_object_key": None,
             "error": None,
         }
 
+        temp_file_path = None
+        
         try:
             # Rate limiting
             self._rate_limit()
 
-            file_path = self._get_file_path(artist, title)
+            # Use temp directory for download
+            temp_dir = Path(tempfile.mkdtemp())
+            temp_file_path = temp_dir / f"{self._sanitize_filename(artist)}_{self._sanitize_filename(title)}"
             
             # Ensure the directory exists
-            file_path.parent.mkdir(parents=True, exist_ok=True)
+            temp_dir.mkdir(parents=True, exist_ok=True)
 
             # Search query
             search_query = f"{artist} {title} audio"
@@ -122,7 +145,7 @@ class AudioFetcher:
             # yt-dlp options - simplified and fixed
             ydl_opts = {
                 "format": "bestaudio/best",  # Get best audio quality available
-                "outtmpl": str(file_path.parent / f"{file_path.stem}.%(ext)s"),  # Let yt-dlp handle extension
+                "outtmpl": str(temp_file_path.parent / f"{temp_file_path.stem}.%(ext)s"),  # Let yt-dlp handle extension
                 "postprocessors": [{
                     "key": "FFmpegExtractAudio",
                     "preferredcodec": "mp3",
@@ -150,53 +173,57 @@ class AudioFetcher:
             )
 
             # Check if download was successful
-            mp3_path = file_path.with_suffix(".mp3")
+            mp3_path = temp_file_path.with_suffix(".mp3")
+            downloaded_file = None
+            
             if mp3_path.exists() and mp3_path.stat().st_size > 0:
-                # Normalize the audio for consistent loudness
-                normalization_success = self._normalize_audio(mp3_path)
-                if not normalization_success:
-                    logger.warning(f"Audio normalization failed for {artist} - {title}, but keeping original file")
-                
-                file_size = mp3_path.stat().st_size
-                result.update(
-                    {
-                        "file_path": str(mp3_path),
-                        "file_source": FileSource.YOUTUBE,
-                        "file_size": file_size,
-                    }
-                )
-                logger.info(f"Successfully downloaded {artist} - {title} from YouTube")
+                downloaded_file = mp3_path
             else:
                 # Also check for other possible extensions that might have been created
-                possible_files = list(file_path.parent.glob(f"{file_path.stem}.*"))
+                possible_files = list(temp_file_path.parent.glob(f"{temp_file_path.stem}.*"))
                 if possible_files:
                     # Found a file, use the first one
                     actual_file = possible_files[0]
                     if actual_file.stat().st_size > 0:
-                        # Normalize the audio for consistent loudness
-                        normalization_success = self._normalize_audio(actual_file)
-                        if not normalization_success:
-                            logger.warning(f"Audio normalization failed for {artist} - {title}, but keeping original file")
-                            
-                        file_size = actual_file.stat().st_size
-                        result.update(
-                            {
-                                "file_path": str(actual_file),
-                                "file_source": FileSource.YOUTUBE,
-                                "file_size": file_size,
-                            }
-                        )
-                        logger.info(f"Successfully downloaded {artist} - {title} from YouTube (as {actual_file.suffix})")
-                    else:
-                        result["error"] = "Download completed but file is empty"
-                        logger.warning(f"Download failed for {artist} - {title}: file is empty")
+                        downloaded_file = actual_file
+
+            if downloaded_file:
+                # Normalize the audio for consistent loudness
+                normalization_success = self._normalize_audio(downloaded_file)
+                if not normalization_success:
+                    logger.warning(f"Audio normalization failed for {artist} - {title}, but keeping original file")
+                
+                # Generate S3 key and upload file
+                s3_key = self.s3_storage.generate_s3_key(artist, title)
+                upload_result = await self.s3_storage.upload_file(str(downloaded_file), s3_key)
+                
+                if upload_result["success"]:
+                    result.update(
+                        {
+                            "s3_object_key": s3_key,
+                            "file_source": FileSource.S3,
+                            "file_size": upload_result["file_size"],
+                        }
+                    )
+                    logger.info(f"Successfully downloaded {artist} - {title} from YouTube and uploaded to S3")
                 else:
-                    result["error"] = "Download completed but file not found or empty"
-                    logger.warning(f"Download failed for {artist} - {title}: file not found")
+                    result["error"] = f"Upload to S3 failed: {upload_result['error']}"
+                    logger.error(f"Upload to S3 failed for {artist} - {title}: {upload_result['error']}")
+            else:
+                result["error"] = "Download completed but file not found or empty"
+                logger.warning(f"Download failed for {artist} - {title}: file not found")
 
         except Exception as e:
             logger.error(f"Error downloading from YouTube for {artist} - {title}: {e}")
             result["error"] = str(e)
+        finally:
+            # Clean up temporary files
+            if temp_file_path and temp_file_path.parent.exists():
+                try:
+                    import shutil
+                    shutil.rmtree(temp_file_path.parent)
+                except Exception as e:
+                    logger.warning(f"Failed to clean up temp directory: {e}")
 
         return result
 
