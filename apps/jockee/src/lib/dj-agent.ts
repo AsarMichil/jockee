@@ -690,13 +690,11 @@ class QuickCutStrategy implements TransitionStrategy {
     ) {
       console.log("EXECUTING QUICK CUT");
 
-      // Quick cut: immediately start the next track and set crossfader
-      const mixInPoint = this.toDeckTrack.mix_in_point ?? 0;
-
-      // Start the to-deck immediately
+      // Quick cut: immediately start the next track from the beginning (radio DJ style)
+      // No mix points - just cut to the start of the song
       this.set(playDeckAtom, {
         deck: this.fromDeckName === "deckA" ? "deckB" : "deckA",
-        offset: mixInPoint
+        offset: 0
       });
 
       // Set crossfader to fully switch to the new track
