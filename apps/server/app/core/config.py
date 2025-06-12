@@ -11,6 +11,10 @@ class Settings(BaseSettings):
     VERSION: str = "1.0.0"
     DESCRIPTION: str = "Auto-DJ mixing service backend - Phase 1 MVP"
 
+    # Server Configuration
+    PORT: int = 8000
+    HOST: str = "0.0.0.0"
+
     # Environment
     ENVIRONMENT: str = "development"
     DEBUG: bool = True
@@ -64,12 +68,20 @@ class Settings(BaseSettings):
 
     @field_validator("AUDIO_STORAGE_PATH")
     def validate_audio_path(cls, v):
-        # Ensure the audio storage directory exists (only if writable)
-        try:
-            os.makedirs(v, exist_ok=True)
-        except (OSError, PermissionError):
-            # Skip directory creation if path is not writable (e.g., in containers)
-            pass
+        # Only create directory in development or when writable
+        if os.getenv("ENVIRONMENT", "development") == "development":
+            try:
+                os.makedirs(v, exist_ok=True)
+            except (OSError, PermissionError):
+                # Skip directory creation if path is not writable (e.g., in containers)
+                pass
+        return v
+
+    @field_validator("DEBUG", mode="before")
+    def set_debug_mode(cls, v):
+        # Force DEBUG=False in production
+        if os.getenv("ENVIRONMENT") == "production":
+            return False
         return v
 
     class Config:
