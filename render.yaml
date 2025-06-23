@@ -1,0 +1,170 @@
+services:
+  # Redis service for Celery broker and caching
+  - type: redis
+    name: autodj-redis
+    plan: free
+    region: ohio
+    maxmemoryPolicy: allkeys-lru
+    ipAllowList: [] # Only allow internal connections
+
+  # FastAPI Web Service
+  - type: web
+    name: autodj-api
+    runtime: docker
+    region: ohio
+    plan: free
+    dockerfilePath: ./apps/server/Dockerfile
+    dockerContext: ./apps/server
+    healthCheckPath: /health
+    envVars:
+      # Environment
+      - key: ENVIRONMENT
+        value: production
+      - key: DEBUG
+        value: "false"
+      - key: LOG_LEVEL
+        value: INFO
+      
+      # Server config (PORT is set automatically by Render)
+      - key: HOST
+        value: 0.0.0.0
+      
+      # Security - these will need to be set manually in Render dashboard
+      - key: SECRET_KEY
+        sync: false
+      - key: ALGORITHM
+        value: HS256
+      - key: ACCESS_TOKEN_EXPIRE_MINUTES
+        value: "30"
+      
+      # Database - Supabase connection string (set manually)
+      - key: DATABASE_URL
+        sync: false
+      
+      # Redis - automatically connect to our Redis service
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: autodj-redis
+          property: connectionString
+      - key: CELERY_BROKER_URL
+        fromService:
+          type: redis
+          name: autodj-redis
+          property: connectionString
+      - key: CELERY_RESULT_BACKEND
+        fromService:
+          type: redis
+          name: autodj-redis
+          property: connectionString
+      
+      # Spotify API (set manually)
+      - key: SPOTIFY_CLIENT_ID
+        sync: false
+      - key: SPOTIFY_CLIENT_SECRET
+        sync: false
+      - key: SPOTIFY_REDIRECT_URI
+        sync: false
+      
+      # AWS S3 (set manually)
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      - key: AWS_REGION
+        value: us-east-1
+      - key: S3_BUCKET_NAME
+        sync: false
+      - key: CLOUDFRONT_DOMAIN
+        sync: false
+      
+      # Audio Storage (ephemeral filesystem)
+      - key: AUDIO_STORAGE_PATH
+        value: /tmp/audio
+      - key: MAX_AUDIO_CACHE_GB
+        value: "5"
+      
+      # yt-dlp settings (reduced for production)
+      - key: YTDL_RATE_LIMIT
+        value: 1M
+      - key: YTDL_MAX_DOWNLOADS_PER_MINUTE
+        value: 30
+      
+      # CORS (set manually with your frontend domain)
+      - key: CORS_ORIGINS
+        sync: false
+
+  # Celery Worker Service
+  - type: worker
+    name: autodj-celery-worker
+    runtime: docker
+    region: ohio
+    plan: free
+    dockerfilePath: ./apps/server/Dockerfile
+    dockerContext: ./apps/server
+    dockerCommand: celery -A app.workers.celery_app worker --loglevel=info --concurrency=1
+    envVars:
+      # Environment
+      - key: ENVIRONMENT
+        value: production
+      - key: DEBUG
+        value: "false"
+      - key: LOG_LEVEL
+        value: INFO
+      
+      # Security
+      - key: SECRET_KEY
+        sync: false
+      - key: ALGORITHM
+        value: HS256
+      
+      # Database - Supabase connection string (set manually)
+      - key: DATABASE_URL
+        sync: false
+      
+      # Redis - automatically connect to our Redis service
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: autodj-redis
+          property: connectionString
+      - key: CELERY_BROKER_URL
+        fromService:
+          type: redis
+          name: autodj-redis
+          property: connectionString
+      - key: CELERY_RESULT_BACKEND
+        fromService:
+          type: redis
+          name: autodj-redis
+          property: connectionString
+      
+      # Spotify API (set manually)
+      - key: SPOTIFY_CLIENT_ID
+        sync: false
+      - key: SPOTIFY_CLIENT_SECRET
+        sync: false
+      
+      # AWS S3 (set manually)
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      - key: AWS_REGION
+        value: us-east-1
+      - key: S3_BUCKET_NAME
+        sync: false
+      - key: CLOUDFRONT_DOMAIN
+        sync: false
+      
+      # Audio Storage (ephemeral filesystem)
+      - key: AUDIO_STORAGE_PATH
+        value: /tmp/audio
+      - key: MAX_AUDIO_CACHE_GB
+        value: "5"
+      
+      # yt-dlp settings
+      - key: YTDL_RATE_LIMIT
+        value: 1M
+      - key: YTDL_MAX_DOWNLOADS_PER_MINUTE
+        value: "30" 

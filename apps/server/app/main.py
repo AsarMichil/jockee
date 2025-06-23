@@ -79,9 +79,10 @@ async def health_check():
     try:
         # Test database connection
         from app.db.session import SessionLocal
+        from sqlalchemy import text
 
         db = SessionLocal()
-        db.execute("SELECT 1")
+        db.execute(text("SELECT 1"))
         db.close()
 
         # Test Redis connection
@@ -165,6 +166,6 @@ if __name__ == "__main__":
         "app.main:app",
         host="0.0.0.0",
         port=8000,
-        reload=settings.DEBUG,
+        reload=settings.DEBUG == "true",
         log_level=settings.LOG_LEVEL.lower(),
     )

@@ -3,6 +3,7 @@ from typing import Dict, Any
 from datetime import datetime
 from sqlalchemy.orm import Session
 import asyncio
+from sqlalchemy import text
 from app.workers.celery_app import celery_app
 from app.db.session import SessionLocal
 from app.models.track import Track, FileSource
@@ -383,7 +384,7 @@ def health_check_task():
     try:
         # Test database connection
         db = get_db_session()
-        db.execute("SELECT 1")
+        db.execute(text("SELECT 1"))
         db.close()
 
         # Test audio storage

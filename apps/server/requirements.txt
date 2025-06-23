@@ -23,7 +23,7 @@ numpy==2.2.0
 scipy==1.14.1
 
 # Audio downloading
-yt-dlp==2024.12.23
+yt-dlp==2025.06.09
 
 # Spotify API
 spotipy==2.24.0

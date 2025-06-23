@@ -18,7 +18,7 @@ A FastAPI-based backend service for automatic DJ mixing that analyzes Spotify pl
 - **Redis** for caching and job queues
 - **Celery** for background task processing
 - **SQLAlchemy** ORM with Alembic migrations
-- **Docker** containerization with docker-compose
+- **Docker** containerization with docker compose
 
 ## 🚀 Quick Start
 

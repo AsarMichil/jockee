@@ -3,6 +3,17 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "check-types": "echo 'Server type check complete'"
+    "dev": "python scripts/dev_start.py",
+    "dev:api": "uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload",
+    "dev:worker": "celery -A app.workers.celery_app worker --loglevel=info --concurrency=2",
+    "dev:beat": "celery -A app.workers.celery_app beat --loglevel=info",
+    "prod:api": "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}",
+    "prod:worker": "celery -A app.workers.celery_app worker --loglevel=info --concurrency=1",
+    "check-types": "echo 'Server type check complete'",
+    "deploy": "python scripts/deploy.py",
+    "docker:up": "docker compose up -d",
+    "docker:down": "docker compose down",
+    "docker:logs": "docker compose logs -f",
+    "docker:clean": "docker compose down && docker system prune -f && docker volume prune -f"
   }
 }
