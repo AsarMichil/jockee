@@ -28,7 +28,7 @@ async def get_user_playlists(
     try:
         # Fetch playlists from Spotify
         playlists_data = spotify_client.get_user_playlists(limit=limit, offset=offset)
-        
+
         # Convert to our schema format
         playlists = []
         for item in playlists_data.get("items", []):
@@ -58,7 +58,7 @@ async def get_user_playlists(
                 snapshot_id=item["snapshot_id"]
             )
             playlists.append(playlist)
-        
+
         return PlaylistsResponse(
             items=playlists,
             total=playlists_data.get("total", len(playlists)),
@@ -88,7 +88,7 @@ async def search_playlists(
     try:
         # Search playlists from Spotify
         playlists_data = spotify_client.search_playlists(query=q, limit=limit, offset=offset)
-        
+
         # Convert to our schema format
         playlists = []
         for item in playlists_data.get("items", []):
@@ -118,7 +118,7 @@ async def search_playlists(
                 snapshot_id=item["snapshot_id"]
             )
             playlists.append(playlist)
-        
+
         return PlaylistsResponse(
             items=playlists,
             total=playlists_data.get("total", len(playlists)),
@@ -145,7 +145,7 @@ async def get_playlist_details(
     """
     try:
         playlist_data = spotify_client.get_playlist_details(playlist_id)
-        
+
         return PlaylistDetailsResponse(
             id=playlist_data["id"],
             name=playlist_data["name"],
